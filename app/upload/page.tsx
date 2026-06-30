@@ -27,12 +27,24 @@ type ReportType = 'expense' | 'sales' | 'payroll';
 
 type LineItem = {
     item?: string; orderDescription?: string; lineItem?: string; category?: string[]; date?: string;
-    unitQty?: number; perUnit?: number; unitOfMeasure?: string; unitPrice?: number; taxAmount?: number; totalAmount?: number;
+    unitQty?: number; perUnit?: number; unitOfMeasure?: string; unitPrice?: number; totalAmount?: number;
     vendor?: string; invoice?: string; location?: string; bank?: string; card?: string; cardRaw?: string;
 };
 type FileState = { file: File; status: 'queued' | 'parsing' | 'creating' | 'done' | 'error'; created: number; found: number; error?: string; note?: string };
 type Flag = { tone: 'warn' | 'info'; text: string };
 type RunResult = { created: number; flags: Flag[]; href: string; label: string } | null;
+
+// ── Browser notifications ───────────────────────────────────────────────────────
+// A run is client-driven: it keeps going if the user switches tabs or navigates within
+// the app, but stops if they CLOSE the tab. So we (a) ask for notification permission on
+// the first run and post an OS notification when it finishes, and (b) warn before unload
+// while a run is active. (True "close the tab and come back" would need a server-side job.)
+function requestNotifyPermission() {
+    try { if (typeof Notification !== 'undefined' && Notification.permission === 'default') void Notification.requestPermission(); } catch { /* unsupported */ }
+}
+function notify(title: string, body: string) {
+    try { if (typeof Notification !== 'undefined' && Notification.permission === 'granted') new Notification(title, { body }); } catch { /* unsupported */ }
+}
 
 export default function UploadPage() {
     const [mounted, setMounted] = useState(false);
@@ -92,6 +104,14 @@ function Uploader() {
     const [running, setRunning] = useState(false);
     const [result, setResult] = useState<RunResult>(null);
     const [drag, setDrag] = useState(false);
+
+    // Warn before closing/reloading the tab mid-run — closing it aborts the upload.
+    useEffect(() => {
+        if (!running) return;
+        const warn = (e: BeforeUnloadEvent) => { e.preventDefault(); e.returnValue = ''; };
+        window.addEventListener('beforeunload', warn);
+        return () => window.removeEventListener('beforeunload', warn);
+    }, [running]);
     const inputRef = useRef<HTMLInputElement>(null);
 
     function reset() { setFiles([]); setResult(null); }
@@ -107,11 +127,15 @@ function Uploader() {
 
     // ── Expense run ──────────────────────────────────────────────────────────
     function buildVendorMap() { const m = new Map<string, string>(); for (const v of vendors) { const n = (v.name || '').trim().toLowerCase(); if (n) m.set(n, v.id); } return m; }
-    async function ensureVendor(name: string | undefined, map: Map<string, string>, created: Set<string>): Promise<string | null> {
-        const n = (name || '').trim(); if (!n) return null;
-        const key = n.toLowerCase(); const hit = map.get(key); if (hit) return hit;
-        const id = await vendorsTable.createRecordAsync({ [vendorsTable.primaryFieldId]: n });
-        map.set(key, id); created.add(n); return id;
+    // Per the /expense-report skill: link ONLY to a vendor that already exists in the Vendors
+    // table — NEVER create one. Exact (case-insensitive) match first, then a loose match (one
+    // name contains the other, e.g. "Webstaurant" ⊂ "Webstaurant Store"). No match → return
+    // null so the row's vendor stays blank and the name is flagged for the user to handle.
+    function matchVendor(name: string | undefined, map: Map<string, string>): string | null {
+        const n = (name || '').trim().toLowerCase(); if (!n) return null;
+        const exact = map.get(n); if (exact) return exact;
+        for (const [k, id] of map) { if (k.includes(n) || n.includes(k)) return id; }
+        return null;
     }
     function expenseFields(li: LineItem, vendorId: string | null, file: File): Record<string, unknown> {
         // Location for expenses is detected from the document (Airtable resolves it),
@@ -131,7 +155,8 @@ function Uploader() {
         if (li.perUnit != null) f[EX.perUnit] = li.perUnit;
         if (li.unitOfMeasure) f[EX.unitOfMeasure] = li.unitOfMeasure;
         if (li.unitPrice != null) f[EX.unitPrice] = li.unitPrice;
-        if (li.taxAmount != null) f[EX.tax] = li.taxAmount;
+        // Tax & Shipping arrive as their OWN line items (item='Tax'/'Shipping') per the skill,
+        // so there's no per-line tax field to set here.
         if (li.totalAmount != null) f[EX.total] = li.totalAmount;
         if (li.invoice) f[EX.invoice] = li.invoice;
         if (li.bank) f[EX.bank] = li.bank;
@@ -142,7 +167,7 @@ function Uploader() {
 
     async function runExpense() {
         const vendorMap = buildVendorMap();
-        const newVendors = new Set<string>();
+        const unmatchedVendors = new Set<string>();
         const emptyNotes: string[] = [];
         let created = 0, uncategorized = 0, unknownCard = 0, emptyFiles = 0;
         for (let i = 0; i < files.length; i++) {
@@ -158,7 +183,8 @@ function Uploader() {
                 setStatus(i, { status: 'creating', found: items.length });
                 let made = 0;
                 for (const li of items) {
-                    const vendorId = await ensureVendor(li.vendor, vendorMap, newVendors);
+                    const vendorId = matchVendor(li.vendor, vendorMap);
+                    if (li.vendor?.trim() && !vendorId) unmatchedVendors.add(li.vendor.trim());
                     await expensesTable.createRecordAsync(expenseFields(li, vendorId, files[i].file));
                     made++; created++;
                     if (!li.category?.length) uncategorized++;
@@ -169,11 +195,12 @@ function Uploader() {
             } catch (e) { setStatus(i, { status: 'error', error: e instanceof Error ? e.message : 'Failed.' }); }
         }
         const flags: Flag[] = [];
-        if (newVendors.size) flags.push({ tone: 'warn', text: `${newVendors.size} new vendor${newVendors.size === 1 ? '' : 's'} auto-created (${[...newVendors].slice(0, 4).join(', ')}${newVendors.size > 4 ? '…' : ''}) — confirm on Expenses.` });
+        if (unmatchedVendors.size) flags.push({ tone: 'warn', text: `${unmatchedVendors.size} unrecognized vendor${unmatchedVendors.size === 1 ? '' : 's'} (${[...unmatchedVendors].slice(0, 4).join(', ')}${unmatchedVendors.size > 4 ? '…' : ''}) — left blank (no vendor was created); link on Expenses or add the vendor in Airtable.` });
         if (unknownCard) flags.push({ tone: 'warn', text: `${unknownCard} statement row${unknownCard === 1 ? '' : 's'} on a card that isn't a known option — left blank; set the card manually.` });
         if (uncategorized) flags.push({ tone: 'info', text: `${uncategorized} row${uncategorized === 1 ? '' : 's'} have no category yet — assign on Expenses.` });
         if (emptyFiles) flags.push({ tone: 'warn', text: `${emptyFiles} file${emptyFiles === 1 ? '' : 's'} produced no line items${emptyNotes.length ? ` — ${emptyNotes[0]}` : ' — check the file.'}` });
-        setResult({ created, flags, href: '/expenses', label: `Review in Expenses` });
+        const r: RunResult = { created, flags, href: '/expenses', label: `Review in Expenses` };
+        setResult(r); return r;
     }
 
     // ── Sales run (deterministic CSV) ────────────────────────────────────────
@@ -211,19 +238,35 @@ function Uploader() {
         if (created) flags.push({ tone: 'info', text: `All ${created} sales need a product link to categorize by department — set them on Sales.` });
         if (noWeek) flags.push({ tone: 'warn', text: `${noWeek} file${noWeek === 1 ? '' : 's'} skipped — filename didn't contain a date.` });
         if (weeksUsed.size) flags.push({ tone: 'info', text: `Week${weeksUsed.size === 1 ? '' : 's'} used: ${[...weeksUsed].join(', ')}.` });
-        setResult({ created, flags, href: '/sales', label: 'Review in Sales' });
+        const r: RunResult = { created, flags, href: '/sales', label: 'Review in Sales' };
+        setResult(r); return r;
     }
 
     async function run() {
         if (!canRun) return;
+        requestNotifyPermission();   // ask once, inside this click (a user gesture)
         setRunning(true); setResult(null);
-        if (type === 'expense') await runExpense();
-        else if (type === 'sales') await runSales();
+        let r: RunResult = null;
+        if (type === 'expense') r = await runExpense();
+        else if (type === 'sales') r = await runSales();
         setRunning(false);
+        // Fire an OS notification so the user knows the Claude/CSV run finished even if they
+        // switched tabs or navigated elsewhere in the app while it ran.
+        if (r) {
+            const noun = type === 'sales' ? 'sale' : 'expense';
+            const page = type === 'sales' ? 'Sales' : 'Expenses';
+            notify(
+                `Upload complete — ${r.created} ${noun}${r.created === 1 ? '' : 's'} created`,
+                r.flags.length ? `${r.flags.length} item${r.flags.length === 1 ? '' : 's'} need a look — open ${page}.` : 'Everything filed cleanly.',
+            );
+        }
     }
 
     const accept = type === 'sales' ? '.csv,text/csv' : '.pdf,.csv,image/*,application/pdf,text/csv';
     const canRun = files.length > 0 && !running && type !== 'payroll' && (type !== 'sales' || !!locId);
+    // Live run tallies (derived from the per-file state the run loop updates — no extra cost).
+    const createdSoFar = files.reduce((s, f) => s + f.created, 0);
+    const filesDone = files.filter(f => f.status === 'done' || f.status === 'error').length;
     const copy = type === 'expense'
         ? 'Invoices, receipts and bank/card statements — PDF, CSV or photo. Claude reads each and files line items as draft expenses. The location is detected from each document.'
         : 'Square item-sales-summary CSVs. The week is read from the filename; one Sales row is created per line for the chosen location.';
@@ -278,6 +321,18 @@ function Uploader() {
                     {/* File list */}
                     {files.length > 0 && (
                         <div style={{ ...glass(), padding: '8px', marginTop: '16px', display: 'flex', flexDirection: 'column' }}>
+                            {/* Live run header — at-a-glance progress while files process */}
+                            {running && (
+                                <div style={{ padding: '11px 12px 13px', borderBottom: '1px solid var(--hairline)' }}>
+                                    <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: '10px', marginBottom: '8px' }}>
+                                        <span style={{ fontSize: '13px', fontWeight: 700, color: 'var(--text-primary)' }}>Working through your files…</span>
+                                        <span style={{ fontFamily: MONO, fontSize: '12px', color: 'var(--text-muted)' }}>{filesDone} / {files.length} files · {createdSoFar} added</span>
+                                    </div>
+                                    <div style={{ height: '6px', borderRadius: '3px', background: 'rgba(50,70,79,0.12)', overflow: 'hidden' }}>
+                                        <div className="dd-shimmer" style={{ height: '100%', width: `${Math.max(6, Math.round((filesDone / files.length) * 100))}%`, borderRadius: '3px', background: 'var(--accent)', transition: 'width .3s ease' }} />
+                                    </div>
+                                </div>
+                            )}
                             {files.map((fs, i) => (
                                 <div key={i} style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '11px 12px', borderBottom: i < files.length - 1 ? '1px solid var(--hairline)' : 'none' }}>
                                     <span style={{ flexShrink: 0 }}>{fileIcon(fs.file)}</span>
@@ -326,10 +381,10 @@ function Uploader() {
 
 function statusText(fs: FileState, type: ReportType): React.ReactNode {
     switch (fs.status) {
-        case 'queued': return 'Queued';
-        case 'parsing': return type === 'sales' ? 'Reading CSV…' : 'Reading with Claude…';
-        case 'creating': return `Creating… ${fs.created}/${fs.found}${fs.note ? ` · ${fs.note}` : ''}`;
-        case 'done': return `${fs.created} created${fs.found === 0 ? ' (none found)' : ''}${fs.note ? ` · ${fs.note}` : ''}`;
+        case 'queued': return 'Waiting its turn…';
+        case 'parsing': return type === 'sales' ? 'Reading the CSV…' : 'Claude is reading the document…';
+        case 'creating': return `${type === 'sales' ? 'Adding sales' : 'Filing line items'}… ${fs.created} of ${fs.found}${fs.note ? ` · ${fs.note}` : ''}`;
+        case 'done': return `${fs.created} ${type === 'sales' ? 'sale' : 'expense'}${fs.created === 1 ? '' : 's'} added${fs.found === 0 ? ' · none found in this file' : ''}${fs.note ? ` · ${fs.note}` : ''}`;
         case 'error': return fs.error ?? 'Failed';
     }
 }

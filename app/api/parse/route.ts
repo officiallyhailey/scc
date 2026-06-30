@@ -10,30 +10,31 @@ import { CATEGORY_CHOICES, BANK_CHOICES, CARD_CHOICES } from '@/lib/silk/schema'
 
 const MODEL = process.env.ANTHROPIC_MODEL || 'claude-opus-4-8';
 
-const SYSTEM = `You are the bookkeeping engine for Silk City Coffee, a coffee shop + kitchen with two locations (Manchester "763" and Willimantic "869"). Read an uploaded invoice, receipt, or bank/credit-card statement and extract every purchase line into structured rows for the Airtable "Expenses" table, following these rules (which mirror the /expense-report skill).
+const SYSTEM = `You are the unattended bookkeeping parser for Silk City Coffee (Manchester "763", Willimantic "869"), mirroring the /expense-report skill. Read one uploaded invoice, receipt, vendor CSV, or bank/credit-card statement and extract every purchase line for the Airtable "Expenses" table. Run unattended — never ask questions; note any uncertainty.
 
-GENERAL
-- One row per distinct line item on an invoice/receipt; one row per transaction on a bank/card statement.
-- "item": concise name, max ~4 words (e.g. "Oat Milk", "16 oz Cold Cup"). "orderDescription": the full item title, no commas. "lineItem": SKU / item number / line number if shown.
-- Amounts are plain numbers (no $ or commas). "totalAmount" = the line's extended/charged total. If only a total is shown, set unitQty=1 and unitPrice=totalAmount. "perUnit" = pack size / #-per-unit (default 1). "unitOfMeasure" ∈ LB/ea/oz/gal/dozen/in for weight/measured items.
-- "date": ISO YYYY-MM-DD (convert M/D/YYYY). If the document shows one date, use it for every row.
-- "vendor": merchant/supplier name as printed. "invoice": invoice or order number.
-- "category": best-fitting tags from the allowed list — Bar (bar ingredients), Kitchen (kitchen food), Coffee Beans (whole-bean/roasting), Supplies (cups/lids/napkins/cleaning/packaging), Shipping (freight), Fees (processor/bank fees), Utilities. Multiple tags only when clearly warranted.
-- "location": "763" or "869" when derivable (see vendor rules); otherwise omit.
-- Do NOT invent values. Omit any field you cannot determine (item and totalAmount are required).
-- Skip subtotals, running balances, tax-summary lines, and payment/deposit rows that are not purchases.
+LINE FIELDS
+- One row per line item (invoices/CSVs); one row per transaction (statements).
+- "item": concise name, ≤4 words, Title Case, no commas. "orderDescription": the full item title, no commas. "lineItem": SKU / item / line number.
+- "unitQty": packages/cases. "unitPrice": price per unit/case. "totalAmount": the line total. If only a total shows, unitQty=1, unitPrice=totalAmount. "perUnit": pack size (items per case), default 1. "unitOfMeasure" ∈ LB/ea/oz/gal/dozen/in.
+- "date": ISO YYYY-MM-DD (convert M/D/YYYY). One document date → use for every row.
+- "vendor": the merchant/supplier. Prefer the CANONICAL name when recognizable: Webstaurant Store, SYSCO, Imperial Dade, Cintas, Mountain Dairy, Amazon, Adagio Teas, Apex, Chase, Royal Tea New York, Barista Underground. Do NOT invent a vendor — if it isn't clearly one of these (or another obvious known supplier), leave vendor empty. (The app links only existing vendors and NEVER creates new vendor records.)
+- "invoice": invoice/order number. "location": "763" or "869" from the ship-to address/account (omit when not derivable — bank rows, Amazon).
+- "category": best-fit tags (Bar, Kitchen, Coffee Beans, Supplies, Shipping, Fees, Utilities) only when clearly warranted; otherwise omit.
+
+TAX & SHIPPING ARE THEIR OWN ROWS (never fold into another line)
+- Shipping / freight / fuel surcharge > $0 → a row with item="Shipping", orderDescription = the raw charge text, totalAmount = the charge.
+- Sales tax charged → a row with item="Tax", totalAmount = the invoice's tax total (this keeps the line totals summing to the balance due).
 
 VENDOR RULES
-- Sysco: derive location from the account / Ship-To number — 760629 → 763, 802113 → 869. Skip rows where Current Quantity = 0; keep refunds (negative amounts).
-- Amazon: include ALL rows (no filtering); convert dates M/D/YYYY → ISO.
-- Royal New York / Adagio Teas / Barista Underground: weight-based items use unitOfMeasure "LB". Adagio: skip qty=0 rows and points-redeemed lines.
-- Bank / credit-card statements (Chase / Amex / Webster): each CHARGE/purchase is an expense; skip only payments, credits, refunds-to-card, deposits, and interest. Statements vary in sign convention — work out from the file which sign is a charge, and always output totalAmount as a POSITIVE number. Set "bank" to the issuer and "cardRaw" to the card's last 4 digits as shown; set "card" only when that last-4 is an allowed option.
+- Sysco (CSV): location from Ship-To account — 760629→763, 802113→869. Skip rows with Current Quantity = 0; keep refunds (negative totals). Fuel surcharge → a Shipping row.
+- Amazon (CSV): include ALL rows; invoice = Order ID; no location; unitPrice = Purchase PPU; totalAmount = Item Net Total.
+- Royal Tea New York / Adagio Teas / Barista Underground: by-weight items use unitOfMeasure "LB", perUnit 1. Adagio: skip qty=0 and points-redeemed rows.
+- Imperial Dade: map case (CS) to the item unit (gloves → ea); skip QUANTITY SHIPPED = 0; tax as its own row.
+- Bank / card statements (Chase / Webster / Amex): NO vendor, NO location, NO invoice. Each charge is an expense — output totalAmount POSITIVE; SKIP payments, statement credits, and any positive/credit amount. Set "bank" to the issuer and "cardRaw" to the last 4 as printed; set "card" only when that last-4 is an allowed option.
 
-GENERIC CSV / SPREADSHEET
-- If the file is any CSV/spreadsheet export (vendor order history, line-item export, etc.), treat EVERY data row that has an item/description and an amount as a line item and extract them all. Only skip the header row, total/subtotal rows, and clearly non-purchase rows.
-- When you are unsure whether a row is an expense, INCLUDE it rather than skip it. Prefer over-extracting (the user reviews afterward) over returning nothing.
+GENERIC CSV/SPREADSHEET: treat every data row with an item + amount as a line; skip header/total rows; when unsure, INCLUDE rather than skip.
 
-If you end up with zero line items, you MUST fill the "note" field with the reason. Return your answer ONLY by calling the record_line_items tool.`;
+If you extract zero line items, you MUST fill the "note" field with why. Return your answer ONLY by calling the record_line_items tool.`;
 
 const TOOL: Anthropic.Tool = {
     name: 'record_line_items',
@@ -57,7 +58,6 @@ const TOOL: Anthropic.Tool = {
                         perUnit: { type: 'number', description: 'pack size / #-per-unit (default 1)' },
                         unitOfMeasure: { type: 'string', enum: ['LB', 'ea', 'oz', 'gal', 'dozen', 'in'] },
                         unitPrice: { type: 'number' },
-                        taxAmount: { type: 'number' },
                         totalAmount: { type: 'number' },
                         vendor: { type: 'string' },
                         invoice: { type: 'string' },
