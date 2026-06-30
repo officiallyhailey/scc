@@ -1,5 +1,9 @@
 'use client';
 
+// /inventory — "The Pantry". Lists Inventory-table items with location/department/type/
+// vendor filters and a sort. Create + edit run through the shared <InventoryForm> drawer
+// (the same form the expense drawer pops to add a missing item). Shows the Inventory Name.
+
 import React, { useEffect, useMemo, useState } from 'react';
 import { MagnifyingGlassIcon, PlusIcon, PackageIcon, LinkSimpleIcon } from '@phosphor-icons/react';
 import { Shell } from '@/lib/components/Shell';
@@ -9,21 +13,8 @@ import { useIsNarrow } from '@/lib/useIsNarrow';
 import { glass, Pill, Button, DISPLAY, MONO, inputStyle, PALETTE } from '@/lib/components/ui';
 import { InventoryForm } from '@/lib/components/InventoryForm';
 import { TABLES, INV } from '@/lib/silk/schema';
+import { usd, num, str, linkIds, selectName } from '@/lib/silk/cells';
 
-const usd = (n: number) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(n || 0);
-const sstr = (r: RecordModel, fid: string) => r.getCellValueAsString(fid) || '';
-const nval = (r: RecordModel, fid: string) => { const v = r.getCellValue(fid); return typeof v === 'number' ? v : Number(v) || 0; };
-function lids(r: RecordModel, fid: string): string[] {
-    const v = r.getCellValue(fid);
-    if (!Array.isArray(v)) return [];
-    return v.map(x => (typeof x === 'string' ? x : (x as { id?: string })?.id ?? '')).filter(Boolean);
-}
-function selName(r: RecordModel, fid: string): string {
-    const v = r.getCellValue(fid);
-    if (Array.isArray(v)) return (v[0] && typeof v[0] === 'object' ? (v[0] as { name?: string }).name : String(v[0] ?? '')) ?? '';
-    if (v && typeof v === 'object' && 'name' in v) return (v as { name: string }).name;
-    return typeof v === 'string' ? v : '';
-}
 function uniqueSorted(records: RecordModel[], pick: (r: RecordModel) => string): string[] {
     const s = new Set<string>();
     for (const r of records) { const v = pick(r); if (v) s.add(v); }
@@ -65,30 +56,30 @@ function Inventory() {
     const [sort, setSort] = useState<'item' | 'price' | 'created'>('item');
     const [form, setForm] = useState<null | { recordId?: string }>(null);
 
-    const depts = useMemo(() => uniqueSorted(inv, r => selName(r, INV.department)), [inv]);
-    const types = useMemo(() => uniqueSorted(inv, r => selName(r, INV.type)), [inv]);
+    const depts = useMemo(() => uniqueSorted(inv, r => selectName(r, INV.department)), [inv]);
+    const types = useMemo(() => uniqueSorted(inv, r => selectName(r, INV.type)), [inv]);
     const vendorOptions = useMemo(() => {
         const ids = new Set<string>();
-        for (const r of inv) for (const id of lids(r, INV.vendor)) ids.add(id);
+        for (const r of inv) for (const id of linkIds(r, INV.vendor)) ids.add(id);
         return Array.from(ids).map(id => ({ id, name: vendorNames.get(id) ?? '(vendor)' })).sort((a, b) => a.name.localeCompare(b.name));
     }, [inv, vendorNames]);
 
     const rows = useMemo(() => {
         const needle = q.trim().toLowerCase();
         const filtered = inv
-            .filter(r => loc === 'all' || lids(r, INV.trackingLocations).includes(loc))
-            .filter(r => dept === 'all' || selName(r, INV.department) === dept)
-            .filter(r => type === 'all' || selName(r, INV.type) === type)
-            .filter(r => vendor === 'all' || lids(r, INV.vendor).includes(vendor))
+            .filter(r => loc === 'all' || linkIds(r, INV.trackingLocations).includes(loc))
+            .filter(r => dept === 'all' || selectName(r, INV.department) === dept)
+            .filter(r => type === 'all' || selectName(r, INV.type) === type)
+            .filter(r => vendor === 'all' || linkIds(r, INV.vendor).includes(vendor))
             .filter(r => {
                 if (!needle) return true;
-                const hay = [sstr(r, INV.name), sstr(r, INV.orderName), lids(r, INV.vendor).map(id => vendorNames.get(id) ?? '').join(' '), selName(r, INV.type)].join(' ').toLowerCase();
+                const hay = [str(r, INV.name), str(r, INV.orderName), linkIds(r, INV.vendor).map(id => vendorNames.get(id) ?? '').join(' '), selectName(r, INV.type)].join(' ').toLowerCase();
                 return hay.includes(needle);
             });
         const sorted = filtered.sort((a, b) => {
-            if (sort === 'price') return nval(b, INV.unitPrice) - nval(a, INV.unitPrice);
+            if (sort === 'price') return num(b, INV.unitPrice) - num(a, INV.unitPrice);
             if (sort === 'created') return Date.parse(b.createdTime) - Date.parse(a.createdTime);
-            const an = sstr(a, INV.name) || a.name || '', bn = sstr(b, INV.name) || b.name || '';
+            const an = str(a, INV.name) || a.name || '', bn = str(b, INV.name) || b.name || '';
             return an.localeCompare(bn);
         });
         return sorted.slice(0, 400);
@@ -130,12 +121,12 @@ function Inventory() {
             ) : (
                 <div style={{ ...glass(), padding: '4px', display: 'flex', flexDirection: 'column' }}>
                     {rows.map((r, i) => {
-                        const vendor = lids(r, INV.vendor).map(id => vendorNames.get(id)).filter(Boolean).join(', ');
-                        const dep = selName(r, INV.department);
-                        const type = selName(r, INV.type);
-                        const price = nval(r, INV.unitPrice);
-                        const s763 = nval(r, INV.stock763), s869 = nval(r, INV.stock869);
-                        const url = sstr(r, INV.url);
+                        const vendor = linkIds(r, INV.vendor).map(id => vendorNames.get(id)).filter(Boolean).join(', ');
+                        const dep = selectName(r, INV.department);
+                        const type = selectName(r, INV.type);
+                        const price = num(r, INV.unitPrice);
+                        const s763 = num(r, INV.stock763), s869 = num(r, INV.stock869);
+                        const url = str(r, INV.url);
                         return (
                             <div key={r.id} onClick={() => setForm({ recordId: r.id })}
                                 onMouseEnter={e => { e.currentTarget.style.background = 'var(--glass-bg-soft)'; }}
@@ -143,7 +134,7 @@ function Inventory() {
                                 style={{ display: 'flex', alignItems: 'center', gap: '14px', padding: '12px 14px', borderRadius: 'var(--radius-sm)', cursor: 'pointer', borderBottom: i === rows.length - 1 ? 'none' : '1px solid var(--hairline)' }}>
                                 <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: '5px' }}>
                                     <span style={{ display: 'flex', alignItems: 'center', gap: '7px', fontWeight: 700, fontSize: '14px', color: 'var(--text-primary)' }}>
-                                        {sstr(r, INV.name) || r.name || '(unnamed)'}
+                                        {str(r, INV.name) || r.name || '(unnamed)'}
                                         {url && <LinkSimpleIcon size={13} color={PALETTE.mist} />}
                                     </span>
                                     <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', alignItems: 'center' }}>

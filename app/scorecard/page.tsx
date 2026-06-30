@@ -1,34 +1,21 @@
 'use client';
 
+// /scorecard — the weekly health check. One table grouped Location → Department, each with
+// Expenses / Sales / COG% / Hours / Labor / COS% rows over a 4-week window (◀/▶ pager) plus a
+// blended 4-week summary column. `deptStats()` aggregates Expenses + Sales + Time Sheets by
+// week for a given location and department set; 763 splits Bar/Kitchen, 869 is one Cafe.
+// Department mapping + LABOR_RATE live in lib/silk/schema.
+
 import React, { useEffect, useMemo, useState } from 'react';
 import { ChartBarIcon, CaretLeftIcon, CaretRightIcon } from '@phosphor-icons/react';
 import { Shell } from '@/lib/components/Shell';
 import { AirtableBoundary, useBase, useRecords } from '@/lib/airtable/hooks';
-import type { RecordModel } from '@/lib/airtable/models';
 import { useIsNarrow } from '@/lib/useIsNarrow';
 import { glass, DISPLAY, MONO, PALETTE } from '@/lib/components/ui';
 import { TABLES, EX, SALE, TS, LABOR_RATE } from '@/lib/silk/schema';
+import { usd0 as usd, pct, num, str, linkIds, selectNames, weekKey } from '@/lib/silk/cells';
 
-const usd = (n: number) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(n || 0);
-const pct = (n: number) => `${(n * 100).toFixed(0)}%`;
-
-function num(rec: RecordModel, fid: string): number { const v = rec.getCellValue(fid); return typeof v === 'number' ? v : Number(v) || 0; }
-function str(rec: RecordModel, fid: string): string { return rec.getCellValueAsString(fid) || ''; }
-function linkIds(rec: RecordModel, fid: string): string[] {
-    const v = rec.getCellValue(fid);
-    if (!Array.isArray(v)) return [];
-    return v.map(x => (typeof x === 'string' ? x : (x as { id?: string })?.id ?? '')).filter(Boolean);
-}
-function selectNames(rec: RecordModel, fid: string): string[] {
-    const v = rec.getCellValue(fid);
-    if (Array.isArray(v)) return v.map(x => (typeof x === 'string' ? x : (x as { name?: string })?.name ?? '')).filter(Boolean);
-    if (typeof v === 'string' && v) return [v];
-    return [];
-}
-function weekKey(s: string): string {
-    const m = s.match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/);
-    return m ? `${m[3]}${m[1].padStart(2, '0')}${m[2].padStart(2, '0')}` : '0';
-}
+// COG/COS heat: amber once it's high, gold mid, ink when healthy.
 function cogColor(v: number): string {
     return v >= 0.45 ? PALETTE.rust : v >= 0.30 ? 'var(--accent-deep)' : 'var(--text-primary)';
 }

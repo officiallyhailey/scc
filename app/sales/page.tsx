@@ -1,5 +1,10 @@
 'use client';
 
+// /sales — the sales register. Lists Sales-table rows (one per Square line item) with a
+// detail drawer to edit/create. A row's department/category is read-only — it resolves from
+// the row's "Linked Product", which the drawer's product picker sets. Mirrors the Expenses
+// page; shares cells (lib/silk/cells) and form controls (lib/components/fields).
+
 import React, { useEffect, useMemo, useState } from 'react';
 import {
     MagnifyingGlassIcon, XIcon, ChartLineUpIcon, FloppyDiskIcon, CheckCircleIcon, TagIcon, PlusIcon,
@@ -9,35 +14,16 @@ import { AirtableBoundary, useBase, useRecords } from '@/lib/airtable/hooks';
 import type { RecordModel, TableModel } from '@/lib/airtable/models';
 import { useIsNarrow } from '@/lib/useIsNarrow';
 import { glass, Pill, Button, DISPLAY, MONO, inputStyle, MoneyInput, PALETTE } from '@/lib/components/ui';
+import { Field, LinkPicker, iconBtn } from '@/lib/components/fields';
 import { TABLES, SALE } from '@/lib/silk/schema';
+import { usd, num, str, numStr, linkIds, selectNames, nameMap, weekKey, parseNum } from '@/lib/silk/cells';
 
-const usd = (n: number) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(n || 0);
-const num = (r: RecordModel, fid: string) => { const v = r.getCellValue(fid); return typeof v === 'number' ? v : Number(v) || 0; };
-const str = (r: RecordModel, fid: string) => r.getCellValueAsString(fid) || '';
-const numStr = (r: RecordModel, fid: string) => { const v = r.getCellValue(fid); return v == null || v === '' ? '' : String(v); };
-function linkIds(r: RecordModel, fid: string): string[] {
-    const v = r.getCellValue(fid);
-    if (!Array.isArray(v)) return [];
-    return v.map(x => (typeof x === 'string' ? x : (x as { id?: string })?.id ?? '')).filter(Boolean);
-}
-function lookupNames(r: RecordModel, fid: string): string[] {
-    const v = r.getCellValue(fid);
-    if (Array.isArray(v)) return v.map(x => (typeof x === 'string' ? x : (x as { name?: string })?.name ?? String(x ?? ''))).filter(Boolean);
-    if (v && typeof v === 'object' && 'name' in v) return [(v as { name: string }).name];
-    return typeof v === 'string' && v ? [v] : [];
-}
-function nameMap(records: RecordModel[]): Map<string, string> {
-    const m = new Map<string, string>();
-    for (const r of records) m.set(r.id, r.name || '(untitled)');
-    return m;
-}
-function weekKey(s: string): string {
-    const m = s.match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/);
-    return m ? `${m[3]}${m[1].padStart(2, '0')}${m[2].padStart(2, '0')}` : '0';
-}
-function parseNum(s: string): number | null { if (s.trim() === '') return null; const n = Number(s.replace(/[$,]/g, '')); return Number.isFinite(n) ? n : null; }
+// Department → pill tone (Bar = gold accent, Kitchen = slate, Retail Coffee = muted).
 const deptTone = (d: string): 'olive' | 'mist' | 'gold' | 'slate' | 'neutral' =>
     d === 'Bar' ? 'gold' : d === 'Kitchen' ? 'slate' : d === 'Retail Coffee' ? 'mist' : 'neutral';
+
+const row2: React.CSSProperties = { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' };
+const row3: React.CSSProperties = { display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '12px' };
 
 export default function SalesPage() {
     const [mounted, setMounted] = useState(false);
@@ -75,7 +61,7 @@ function Sales() {
     }, [sales]);
     const depts = useMemo(() => {
         const s = new Set<string>();
-        for (const r of sales) for (const d of lookupNames(r, SALE.department)) s.add(d);
+        for (const r of sales) for (const d of selectNames(r, SALE.department)) s.add(d);
         return Array.from(s).sort();
     }, [sales]);
 
@@ -84,10 +70,10 @@ function Sales() {
         return sales
             .filter(r => week === 'all' || str(r, SALE.weekStart) === week)
             .filter(r => loc === 'all' || linkIds(r, SALE.locations).includes(loc))
-            .filter(r => dept === 'all' || lookupNames(r, SALE.department).includes(dept))
+            .filter(r => dept === 'all' || selectNames(r, SALE.department).includes(dept))
             .filter(r => {
                 if (!needle) return true;
-                return [str(r, SALE.item), str(r, SALE.itemVariation), lookupNames(r, SALE.department).join(' ')].join(' ').toLowerCase().includes(needle);
+                return [str(r, SALE.item), str(r, SALE.itemVariation), selectNames(r, SALE.department).join(' ')].join(' ').toLowerCase().includes(needle);
             })
             .sort((a, b) => weekKey(str(b, SALE.weekStart)).localeCompare(weekKey(str(a, SALE.weekStart))) || num(b, SALE.netSales) - num(a, SALE.netSales))
             .slice(0, 600);
@@ -133,7 +119,7 @@ function Sales() {
                     {rows.map((r, i) => {
                         const item = str(r, SALE.item) || '(item)';
                         const variation = str(r, SALE.itemVariation);
-                        const depts = lookupNames(r, SALE.department);
+                        const depts = selectNames(r, SALE.department);
                         const sold = num(r, SALE.itemsSold);
                         const date = str(r, SALE.date);
                         return (
@@ -208,8 +194,8 @@ function SaleDrawer({
     type D = typeof d;
     const set = <K extends keyof D>(k: K, v: D[K]) => { setD(p => ({ ...p, [k]: v })); setSaved(false); };
 
-    const dept = rec ? lookupNames(rec, SALE.department) : [];
-    const salesCat = rec ? lookupNames(rec, SALE.salesCategory) : [];
+    const dept = rec ? selectNames(rec, SALE.department) : [];
+    const salesCat = rec ? selectNames(rec, SALE.salesCategory) : [];
     const week = rec ? str(rec, SALE.weekStart) : '';
 
     async function save() {
@@ -289,39 +275,3 @@ function SaleDrawer({
     );
 }
 
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
-    return (
-        <label style={{ display: 'block' }}>
-            <div style={{ fontFamily: MONO, fontSize: '10px', fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: '6px' }}>{label}</div>
-            {children}
-        </label>
-    );
-}
-function LinkPicker({ options, names, value, onChange, placeholder }: { options: RecordModel[]; names: Map<string, string>; value: string[]; onChange: (v: string[]) => void; placeholder?: string }) {
-    const [q, setQ] = useState(''); const [open, setOpen] = useState(false);
-    const current = value[0];
-    const matches = useMemo(() => { const n = q.trim().toLowerCase(); return options.filter(o => (n ? (names.get(o.id) ?? '').toLowerCase().includes(n) : true)).slice(0, 40); }, [q, options, names]);
-    if (current && !open) {
-        return (
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', ...inputStyle, padding: '8px 10px' }}>
-                <span style={{ flex: 1, fontSize: '14px', color: 'var(--text-primary)', fontWeight: 600 }}>{names.get(current) ?? current}</span>
-                <button onMouseDown={() => onChange([])} style={iconBtnSm} aria-label="Remove"><XIcon size={13} weight="bold" /></button>
-            </div>
-        );
-    }
-    return (
-        <div style={{ position: 'relative' }}>
-            <input value={q} placeholder={placeholder} onFocus={() => setOpen(true)} onBlur={() => setTimeout(() => setOpen(false), 150)} onChange={e => setQ(e.target.value)} style={inputStyle} />
-            {open && matches.length > 0 && (
-                <div style={dropdown}>{matches.map(o => <div key={o.id} onMouseDown={() => { onChange([o.id]); setOpen(false); setQ(''); }} style={dropItem}>{names.get(o.id) ?? '(untitled)'}</div>)}</div>
-            )}
-        </div>
-    );
-}
-
-const row2: React.CSSProperties = { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' };
-const row3: React.CSSProperties = { display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '12px' };
-const iconBtn: React.CSSProperties = { width: '36px', height: '36px', borderRadius: '10px', border: '1px solid var(--glass-border)', background: 'var(--glass-bg)', color: 'var(--text-primary)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 };
-const iconBtnSm: React.CSSProperties = { width: '26px', height: '26px', borderRadius: '7px', border: 'none', background: 'rgba(50,70,79,0.10)', color: 'var(--text-muted)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 };
-const dropdown: React.CSSProperties = { position: 'absolute', top: 'calc(100% + 4px)', left: 0, right: 0, zIndex: 50, maxHeight: '240px', overflowY: 'auto', borderRadius: 'var(--radius-sm)', background: 'var(--glass-bg-strong)', backdropFilter: 'blur(20px)', WebkitBackdropFilter: 'blur(20px)', border: '1px solid var(--glass-border)', boxShadow: 'var(--shadow)' };
-const dropItem: React.CSSProperties = { padding: '9px 12px', fontSize: '13.5px', color: 'var(--text-primary)', cursor: 'pointer', borderBottom: '1px solid var(--hairline)' };

@@ -1,5 +1,14 @@
 'use client';
 
+// /upload — ingestion. A report-type selector swaps three flows:
+//   • Expense → POST /api/parse (Claude tool-use) extracts line items from PDFs/images/CSVs,
+//     then the client auto-creates Expense rows (location detected from the document).
+//   • Sales   → a Square CSV is parsed deterministically in-browser (lib/silk/csv), week read
+//     from the filename; one Sales row per line for the chosen location.
+//   • Payroll → disabled placeholder (still run via the report skill).
+// Both active flows auto-write, then show a flag summary (the human checkpoint happens on the
+// list pages). Nothing here parses payroll.
+
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import {

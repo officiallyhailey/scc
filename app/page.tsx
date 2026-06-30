@@ -1,5 +1,8 @@
 'use client';
 
+// / — the landing hub. A marquee hero + a glass card linking to each section. No data
+// fetching here; the shared TopNav (in Shell) carries the nav, ? help and idle timeout.
+
 import React from 'react';
 import Link from 'next/link';
 import {

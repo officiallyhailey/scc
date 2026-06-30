@@ -3,36 +3,11 @@
 import React, { useMemo, useState } from 'react';
 import { XIcon, FloppyDiskIcon } from '@phosphor-icons/react';
 import { useBase, useRecords } from '@/lib/airtable/hooks';
-import type { RecordModel, TableModel } from '@/lib/airtable/models';
 import { useIsNarrow } from '@/lib/useIsNarrow';
 import { glass, Button, DISPLAY, MONO, inputStyle, MoneyInput, PALETTE } from '@/lib/components/ui';
+import { Field, PlainSelect, LinkPicker, MultiLinkPicker, iconBtn } from '@/lib/components/fields';
 import { TABLES, INV } from '@/lib/silk/schema';
-
-// ── small cell helpers ─────────────────────────────────────────────────────────
-const sstr = (r: RecordModel, fid: string) => r.getCellValueAsString(fid) || '';
-const nstr = (r: RecordModel, fid: string) => { const v = r.getCellValue(fid); return v == null || v === '' ? '' : String(v); };
-function lids(r: RecordModel, fid: string): string[] {
-    const v = r.getCellValue(fid);
-    if (!Array.isArray(v)) return [];
-    return v.map(x => (typeof x === 'string' ? x : (x as { id?: string })?.id ?? '')).filter(Boolean);
-}
-function selName(r: RecordModel, fid: string): string {
-    const v = r.getCellValue(fid);
-    if (Array.isArray(v)) return (v[0] && typeof v[0] === 'object' ? (v[0] as { name?: string }).name : String(v[0])) ?? '';
-    if (v && typeof v === 'object' && 'name' in v) return (v as { name: string }).name;
-    return typeof v === 'string' ? v : '';
-}
-function choices(table: TableModel, fid: string): string[] {
-    const f = table.getFieldIfExists(fid);
-    const ch = (f?.options as { choices?: { name: string }[] } | undefined)?.choices;
-    return Array.isArray(ch) ? ch.map(c => c.name) : [];
-}
-function nameMap(records: RecordModel[]): Map<string, string> {
-    const m = new Map<string, string>();
-    for (const r of records) m.set(r.id, r.name || '(untitled)');
-    return m;
-}
-const pn = (s: string): number | null => { if (s.trim() === '') return null; const n = Number(s.replace(/[$,]/g, '')); return Number.isFinite(n) ? n : null; };
+import { str, numStr, linkIds, selectName, fieldChoices, nameMap, parseNum } from '@/lib/silk/cells';
 
 /**
  * Create or edit an Inventory item. Self-contained: pulls its own tables/records.
@@ -60,28 +35,28 @@ export function InventoryForm({
     const existing = recordId ? invRecords.find(r => r.id === recordId) ?? null : null;
 
     const [d, setD] = useState(() => ({
-        name: existing ? (sstr(existing, INV.name) || sstr(existing, INV.orderName)) : (initialName ?? ''),
-        vendor: existing ? lids(existing, INV.vendor) : [] as string[],
-        department: existing ? selName(existing, INV.department) : '',
-        type: existing ? selName(existing, INV.type) : '',
-        url: existing ? sstr(existing, INV.url) : '',
-        perUnit: existing ? nstr(existing, INV.perUnit) : '',
-        unit: existing ? selName(existing, INV.unit) : '',
-        unitPrice: existing ? nstr(existing, INV.unitPrice) : '',
-        unitWeight: existing ? nstr(existing, INV.unitWeight) : '',
-        unitMeasure: existing ? selName(existing, INV.unitMeasure) : '',
-        trackingLocations: existing ? lids(existing, INV.trackingLocations) : [] as string[],
-        stock763: existing ? nstr(existing, INV.stock763) : '',
-        base763: existing ? nstr(existing, INV.base763) : '',
-        stock869: existing ? nstr(existing, INV.stock869) : '',
-        base869: existing ? nstr(existing, INV.base869) : '',
+        name: existing ? (str(existing, INV.name) || str(existing, INV.orderName)) : (initialName ?? ''),
+        vendor: existing ? linkIds(existing, INV.vendor) : [] as string[],
+        department: existing ? selectName(existing, INV.department) : '',
+        type: existing ? selectName(existing, INV.type) : '',
+        url: existing ? str(existing, INV.url) : '',
+        perUnit: existing ? numStr(existing, INV.perUnit) : '',
+        unit: existing ? selectName(existing, INV.unit) : '',
+        unitPrice: existing ? numStr(existing, INV.unitPrice) : '',
+        unitWeight: existing ? numStr(existing, INV.unitWeight) : '',
+        unitMeasure: existing ? selectName(existing, INV.unitMeasure) : '',
+        trackingLocations: existing ? linkIds(existing, INV.trackingLocations) : [] as string[],
+        stock763: existing ? numStr(existing, INV.stock763) : '',
+        base763: existing ? numStr(existing, INV.base763) : '',
+        stock869: existing ? numStr(existing, INV.stock869) : '',
+        base869: existing ? numStr(existing, INV.base869) : '',
     }));
     const [busy, setBusy] = useState(false);
     const [err, setErr] = useState('');
     type D = typeof d;
     const set = <K extends keyof D>(k: K, v: D[K]) => { setD(p => ({ ...p, [k]: v })); };
 
-    const dollarPerUnit = existing ? sstr(existing, INV.dollarPerUnit) : '';
+    const dollarPerUnit = existing ? str(existing, INV.dollarPerUnit) : '';
 
     async function save() {
         if (!d.name.trim()) { setErr('Give the item a name.'); return; }
@@ -101,7 +76,7 @@ export function InventoryForm({
             ['perUnit', INV.perUnit], ['unitPrice', INV.unitPrice], ['unitWeight', INV.unitWeight],
             ['stock763', INV.stock763], ['base763', INV.base763], ['stock869', INV.stock869], ['base869', INV.base869],
         ];
-        for (const [k, fid] of numFields) { const v = pn(d[k] as string); if (v != null) f[fid] = v; }
+        for (const [k, fid] of numFields) { const v = parseNum(d[k] as string); if (v != null) f[fid] = v; }
         try {
             let id = recordId ?? '';
             if (existing) await invTable.updateRecordAsync(existing, f);
@@ -135,20 +110,20 @@ export function InventoryForm({
                 <Field label="Vendor"><LinkPicker options={vendors} names={vendorNames} value={d.vendor} onChange={v => set('vendor', v)} placeholder="Search vendors…" /></Field>
 
                 <div style={row2}>
-                    <Field label="Department"><Select options={choices(invTable, INV.department)} value={d.department} onChange={v => set('department', v)} /></Field>
-                    <Field label="Type"><Select options={choices(invTable, INV.type)} value={d.type} onChange={v => set('type', v)} /></Field>
+                    <Field label="Department"><PlainSelect options={fieldChoices(invTable, INV.department)} value={d.department} onChange={v => set('department', v)} /></Field>
+                    <Field label="Type"><PlainSelect options={fieldChoices(invTable, INV.type)} value={d.type} onChange={v => set('type', v)} /></Field>
                 </div>
 
                 <Field label="Link (URL)"><input value={d.url} onChange={e => set('url', e.target.value)} style={inputStyle} placeholder="https://…" /></Field>
 
                 <div style={row2}>
                     <Field label="#/Unit"><input inputMode="decimal" value={d.perUnit} onChange={e => set('perUnit', e.target.value)} style={inputStyle} /></Field>
-                    <Field label="Unit"><Select options={choices(invTable, INV.unit)} value={d.unit} onChange={v => set('unit', v)} /></Field>
+                    <Field label="Unit"><PlainSelect options={fieldChoices(invTable, INV.unit)} value={d.unit} onChange={v => set('unit', v)} /></Field>
                 </div>
                 <div style={row3}>
                     <Field label="Unit price"><MoneyInput value={d.unitPrice} onChange={v => set('unitPrice', v)} /></Field>
                     <Field label="Unit weight"><input inputMode="decimal" value={d.unitWeight} onChange={e => set('unitWeight', e.target.value)} style={inputStyle} /></Field>
-                    <Field label="Unit measure"><Select options={choices(invTable, INV.unitMeasure)} value={d.unitMeasure} onChange={v => set('unitMeasure', v)} /></Field>
+                    <Field label="Unit measure"><PlainSelect options={fieldChoices(invTable, INV.unitMeasure)} value={d.unitMeasure} onChange={v => set('unitMeasure', v)} /></Field>
                 </div>
 
                 {existing && dollarPerUnit && (
@@ -180,68 +155,7 @@ export function InventoryForm({
     );
 }
 
-// ── shared field UI (local to keep this component drop-in) ──────────────────────
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
-    return (
-        <label style={{ display: 'block' }}>
-            <div style={{ fontFamily: MONO, fontSize: '10px', fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: '6px' }}>{label}</div>
-            {children}
-        </label>
-    );
-}
-function Select({ options, value, onChange }: { options: string[]; value: string; onChange: (v: string) => void }) {
-    return (
-        <select value={value} onChange={e => onChange(e.target.value)} style={inputStyle}>
-            <option value="">—</option>
-            {options.map(o => <option key={o} value={o}>{o}</option>)}
-        </select>
-    );
-}
-function LinkPicker({ options, names, value, onChange, placeholder }: { options: RecordModel[]; names: Map<string, string>; value: string[]; onChange: (v: string[]) => void; placeholder?: string }) {
-    const [q, setQ] = useState(''); const [open, setOpen] = useState(false);
-    const current = value[0];
-    const matches = useMemo(() => { const n = q.trim().toLowerCase(); return options.filter(o => (n ? (names.get(o.id) ?? '').toLowerCase().includes(n) : true)).slice(0, 40); }, [q, options, names]);
-    if (current && !open) {
-        return (
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', ...inputStyle, padding: '8px 10px' }}>
-                <span style={{ flex: 1, fontSize: '14px', color: 'var(--text-primary)', fontWeight: 600 }}>{names.get(current) ?? current}</span>
-                <button onMouseDown={() => onChange([])} style={iconBtnSm} aria-label="Remove"><XIcon size={13} weight="bold" /></button>
-            </div>
-        );
-    }
-    return (
-        <div style={{ position: 'relative' }}>
-            <input value={q} placeholder={placeholder} onFocus={() => setOpen(true)} onBlur={() => setTimeout(() => setOpen(false), 150)} onChange={e => setQ(e.target.value)} style={inputStyle} />
-            {open && matches.length > 0 && (
-                <div style={dropdown}>{matches.map(o => <div key={o.id} onMouseDown={() => { onChange([o.id]); setOpen(false); setQ(''); }} style={dropItem}>{names.get(o.id) ?? '(untitled)'}</div>)}</div>
-            )}
-        </div>
-    );
-}
-function MultiLinkPicker({ options, names, value, onChange, placeholder }: { options: RecordModel[]; names: Map<string, string>; value: string[]; onChange: (v: string[]) => void; placeholder?: string }) {
-    const [q, setQ] = useState(''); const [open, setOpen] = useState(false);
-    const matches = useMemo(() => { const n = q.trim().toLowerCase(); return options.filter(o => !value.includes(o.id) && (n ? (names.get(o.id) ?? '').toLowerCase().includes(n) : true)).slice(0, 40); }, [q, options, names, value]);
-    return (
-        <div style={{ position: 'relative' }}>
-            <div style={{ ...inputStyle, display: 'flex', flexWrap: 'wrap', gap: '6px', alignItems: 'center', minHeight: '40px' }}>
-                {value.map(id => (
-                    <span key={id} style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', padding: '2px 4px 2px 9px', borderRadius: '999px', background: 'rgba(113,122,73,0.18)', color: '#5c6539', fontSize: '12px', fontWeight: 700 }}>
-                        {names.get(id) ?? id}
-                        <button onMouseDown={() => onChange(value.filter(x => x !== id))} style={{ ...iconBtnSm, width: '18px', height: '18px' }} aria-label="Remove"><XIcon size={11} weight="bold" /></button>
-                    </span>
-                ))}
-                <input value={q} placeholder={value.length ? '' : placeholder} onFocus={() => setOpen(true)} onBlur={() => setTimeout(() => setOpen(false), 150)} onChange={e => { setQ(e.target.value); setOpen(true); }} style={{ flex: 1, minWidth: '80px', border: 'none', outline: 'none', background: 'transparent', fontFamily: 'var(--font-body)', fontSize: '14px', color: 'var(--text-primary)' }} />
-            </div>
-            {open && matches.length > 0 && (
-                <div style={dropdown}>{matches.map(o => <div key={o.id} onMouseDown={() => { onChange([...value, o.id]); setQ(''); }} style={dropItem}>{names.get(o.id) ?? '(untitled)'}</div>)}</div>
-            )}
-        </div>
-    );
-}
 
+// Grid layouts used by the form rows (kept local; trivial).
 const row2: React.CSSProperties = { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' };
 const row3: React.CSSProperties = { display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '12px' };
-const iconBtn: React.CSSProperties = { width: '36px', height: '36px', borderRadius: '10px', border: '1px solid var(--glass-border)', background: 'var(--glass-bg)', color: 'var(--text-primary)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 };
-const iconBtnSm: React.CSSProperties = { width: '26px', height: '26px', borderRadius: '7px', border: 'none', background: 'rgba(50,70,79,0.10)', color: 'var(--text-muted)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 };
-const dropdown: React.CSSProperties = { position: 'absolute', top: 'calc(100% + 4px)', left: 0, right: 0, zIndex: 50, maxHeight: '240px', overflowY: 'auto', borderRadius: 'var(--radius-sm)', background: 'var(--glass-bg-strong)', backdropFilter: 'blur(20px)', WebkitBackdropFilter: 'blur(20px)', border: '1px solid var(--glass-border)', boxShadow: 'var(--shadow)' };
-const dropItem: React.CSSProperties = { padding: '9px 12px', fontSize: '13.5px', color: 'var(--text-primary)', cursor: 'pointer', borderBottom: '1px solid var(--hairline)' };

@@ -1,55 +1,25 @@
 'use client';
 
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+// /expenses — the expense ledger. A filterable list of every Expenses-table row with
+// a glass detail drawer that edits an existing row OR creates a new one (drawer takes an
+// optional `rec`; absent = create). Reads cells via lib/silk/cells, renders form controls
+// from lib/components/fields. Writes go straight to Airtable via table.updateRecordAsync /
+// createRecordAsync. Filters/search run client-side over useRecords(Expenses).
+
+import React, { useEffect, useMemo, useState } from 'react';
 import {
     MagnifyingGlassIcon, XIcon, ReceiptIcon, FloppyDiskIcon, CheckCircleIcon,
-    PaperclipIcon, CheckIcon, CaretDownIcon, PlusIcon, PackageIcon,
+    PaperclipIcon, PlusIcon, PackageIcon,
 } from '@phosphor-icons/react';
 import { Shell } from '@/lib/components/Shell';
 import { AirtableBoundary, useBase, useRecords } from '@/lib/airtable/hooks';
 import type { RecordModel, TableModel } from '@/lib/airtable/models';
 import { useIsNarrow } from '@/lib/useIsNarrow';
 import { glass, Pill, Button, DISPLAY, MONO, inputStyle, MoneyInput, PALETTE } from '@/lib/components/ui';
+import { Field, PlainSelect, MultiSelectDropdown, AutoTextarea, LinkPicker, iconBtn } from '@/lib/components/fields';
 import { InventoryForm } from '@/lib/components/InventoryForm';
 import { TABLES, EX, INV } from '@/lib/silk/schema';
-
-const usd = (n: number) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(n || 0);
-
-function num(rec: RecordModel, fid: string): number {
-    const v = rec.getCellValue(fid);
-    return typeof v === 'number' ? v : Number(v) || 0;
-}
-function str(rec: RecordModel, fid: string): string {
-    return rec.getCellValueAsString(fid) || '';
-}
-// Linked-record cell → array of record IDs (REST returns ids; tolerate {id} objects too).
-function linkIds(rec: RecordModel, fid: string): string[] {
-    const v = rec.getCellValue(fid);
-    if (!Array.isArray(v)) return [];
-    return v.map(x => (typeof x === 'string' ? x : (x as { id?: string })?.id ?? '')).filter(Boolean);
-}
-function selectNames(rec: RecordModel, fid: string): string[] {
-    const v = rec.getCellValue(fid);
-    if (Array.isArray(v)) return v.map(x => (typeof x === 'string' ? x : (x as { name?: string })?.name ?? '')).filter(Boolean);
-    if (v && typeof v === 'object' && 'name' in v) return [(v as { name: string }).name];
-    if (typeof v === 'string' && v) return [v];
-    return [];
-}
-function fieldChoices(table: TableModel, fid: string): string[] {
-    const f = table.getFieldIfExists(fid);
-    const ch = (f?.options as { choices?: { name: string }[] } | undefined)?.choices;
-    return Array.isArray(ch) ? ch.map(c => c.name) : [];
-}
-function nameMap(records: RecordModel[]): Map<string, string> {
-    const m = new Map<string, string>();
-    for (const r of records) m.set(r.id, r.name || '(untitled)');
-    return m;
-}
-// "MM/DD/YYYY" → sortable "YYYYMMDD" (empty sorts last).
-function weekKey(s: string): string {
-    const m = s.match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/);
-    return m ? `${m[3]}${m[1].padStart(2, '0')}${m[2].padStart(2, '0')}` : '0';
-}
+import { usd, num, str, numStr, linkIds, selectNames, fieldChoices, nameMap, weekKey, parseNum } from '@/lib/silk/cells';
 
 export default function ExpensesPage() {
     const [mounted, setMounted] = useState(false);
@@ -448,116 +418,3 @@ function DetailDrawer({
     );
 }
 
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
-    return (
-        <label style={{ display: 'block' }}>
-            <div style={{ fontFamily: MONO, fontSize: '10px', fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: '6px' }}>{label}</div>
-            {children}
-        </label>
-    );
-}
-
-// Auto-growing textarea that wraps and shows the full order description.
-function AutoTextarea({ value, onChange }: { value: string; onChange: (v: string) => void }) {
-    const ref = useRef<HTMLTextAreaElement>(null);
-    const grow = (el: HTMLTextAreaElement | null) => { if (el) { el.style.height = 'auto'; el.style.height = `${el.scrollHeight}px`; } };
-    useEffect(() => { grow(ref.current); }, [value]);
-    return (
-        <textarea
-            ref={ref} value={value} rows={2}
-            onChange={e => { onChange(e.target.value); grow(e.target); }}
-            style={{ ...inputStyle, resize: 'none', overflow: 'hidden', lineHeight: 1.5, minHeight: '44px' }}
-        />
-    );
-}
-
-// Multi-select shown as a dropdown: closed shows selected chips, open shows a checklist.
-function MultiSelectDropdown({ options, value, onChange, placeholder }: { options: string[]; value: string[]; onChange: (v: string[]) => void; placeholder?: string }) {
-    const [open, setOpen] = useState(false);
-    const ref = useRef<HTMLDivElement>(null);
-    useEffect(() => {
-        if (!open) return;
-        const onDoc = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false); };
-        document.addEventListener('mousedown', onDoc);
-        return () => document.removeEventListener('mousedown', onDoc);
-    }, [open]);
-    const toggle = (o: string) => onChange(value.includes(o) ? value.filter(x => x !== o) : [...value, o]);
-    return (
-        <div ref={ref} style={{ position: 'relative' }}>
-            <button type="button" onClick={() => setOpen(o => !o)} style={{ ...inputStyle, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap', minHeight: '40px', textAlign: 'left' }}>
-                {value.length === 0
-                    ? <span style={{ color: 'var(--text-muted)' }}>{placeholder ?? 'Select…'}</span>
-                    : value.map(c => <Pill key={c} text={c} tone="olive" />)}
-                <CaretDownIcon size={14} weight="bold" style={{ marginLeft: 'auto', color: 'var(--text-muted)', transform: open ? 'rotate(180deg)' : 'none', transition: 'transform .12s' }} />
-            </button>
-            {open && (
-                <div style={dropdown}>
-                    {options.map(o => {
-                        const on = value.includes(o);
-                        return (
-                            <div key={o} onClick={() => toggle(o)} style={{ ...dropItem, display: 'flex', alignItems: 'center', gap: '9px', color: on ? 'var(--text-primary)' : 'var(--text-muted)', fontWeight: on ? 700 : 500 }}>
-                                <span style={{ width: '17px', height: '17px', borderRadius: '5px', border: '1px solid var(--hairline)', background: on ? 'var(--accent)' : 'transparent', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                                    {on && <CheckIcon size={12} weight="bold" color="var(--accent-text)" />}
-                                </span>
-                                {o}
-                            </div>
-                        );
-                    })}
-                </div>
-            )}
-        </div>
-    );
-}
-
-function PlainSelect({ options, value, onChange }: { options: string[]; value: string; onChange: (v: string) => void }) {
-    return (
-        <select value={value} onChange={e => onChange(e.target.value)} style={inputStyle}>
-            <option value="">—</option>
-            {options.map(o => <option key={o} value={o}>{o}</option>)}
-        </select>
-    );
-}
-
-// Searchable single linked-record picker (stores [id]).
-function LinkPicker({ options, names, value, onChange, placeholder }: { options: RecordModel[]; names: Map<string, string>; value: string[]; onChange: (v: string[]) => void; placeholder?: string }) {
-    const [q, setQ] = useState('');
-    const [open, setOpen] = useState(false);
-    const current = value[0];
-    const matches = useMemo(() => {
-        const n = q.trim().toLowerCase();
-        return options.filter(o => (n ? (names.get(o.id) ?? '').toLowerCase().includes(n) : true)).slice(0, 40);
-    }, [q, options, names]);
-
-    if (current && !open) {
-        return (
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', ...inputStyle, padding: '8px 10px' }}>
-                <span style={{ flex: 1, fontSize: '14px', color: 'var(--text-primary)', fontWeight: 600 }}>{names.get(current) ?? current}</span>
-                <button onMouseDown={() => onChange([])} style={iconBtnSm} aria-label="Remove"><XIcon size={13} weight="bold" /></button>
-            </div>
-        );
-    }
-    return (
-        <div style={{ position: 'relative' }}>
-            <input value={q} placeholder={placeholder} autoFocus={open}
-                onFocus={() => setOpen(true)} onBlur={() => setTimeout(() => setOpen(false), 150)}
-                onChange={e => setQ(e.target.value)} style={inputStyle} />
-            {open && matches.length > 0 && (
-                <div style={dropdown}>
-                    {matches.map(o => (
-                        <div key={o.id} onMouseDown={() => { onChange([o.id]); setOpen(false); setQ(''); }} style={dropItem}>{names.get(o.id) ?? '(untitled)'}</div>
-                    ))}
-                </div>
-            )}
-        </div>
-    );
-}
-
-// helpers / styles
-function numStr(rec: RecordModel, fid: string): string { const v = rec.getCellValue(fid); return v == null || v === '' ? '' : String(v); }
-function parseNum(s: string): number | null { if (s.trim() === '') return null; const n = Number(s.replace(/[$,]/g, '')); return Number.isFinite(n) ? n : null; }
-
-const iconBtn: React.CSSProperties = { width: '36px', height: '36px', borderRadius: '10px', border: '1px solid var(--glass-border)', background: 'var(--glass-bg)', color: 'var(--text-primary)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 };
-const iconBtnSm: React.CSSProperties = { width: '26px', height: '26px', borderRadius: '7px', border: 'none', background: 'rgba(50,70,79,0.10)', color: 'var(--text-muted)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 };
-const clearBtn: React.CSSProperties = { position: 'absolute', right: '8px', top: '50%', transform: 'translateY(-50%)', ...iconBtnSm };
-const dropdown: React.CSSProperties = { position: 'absolute', top: 'calc(100% + 4px)', left: 0, right: 0, zIndex: 50, maxHeight: '260px', overflowY: 'auto', borderRadius: 'var(--radius-sm)', background: 'var(--glass-bg-strong)', backdropFilter: 'blur(20px)', WebkitBackdropFilter: 'blur(20px)', border: '1px solid var(--glass-border)', boxShadow: 'var(--shadow)' };
-const dropItem: React.CSSProperties = { padding: '9px 12px', fontSize: '13.5px', color: 'var(--text-primary)', cursor: 'pointer', borderBottom: '1px solid var(--hairline)' };
