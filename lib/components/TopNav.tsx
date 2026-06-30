@@ -67,7 +67,7 @@ export function TopNav() {
     );
 
     const helpBtn = (
-        <button onClick={openHelp} aria-label="The weekly loop" title="The weekly loop" style={{ ...iconBtn, borderRadius: '50%' }}>
+        <button onClick={openHelp} aria-label="How it works" title="How it works — running a report & the pages" style={{ ...iconBtn, borderRadius: '50%' }}>
             <QuestionIcon size={20} weight="bold" />
         </button>
     );
