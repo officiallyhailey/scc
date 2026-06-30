@@ -19,7 +19,7 @@ import {
 import { Shell } from '@/lib/components/Shell';
 import { AirtableBoundary, useBase, useRecords } from '@/lib/airtable/hooks';
 import { useIsNarrow } from '@/lib/useIsNarrow';
-import { glass, Button, Pill, DISPLAY, MONO, BODY, PALETTE } from '@/lib/components/ui';
+import { glass, Button, Pill, DISPLAY, MONO, BODY, PALETTE, inputStyle } from '@/lib/components/ui';
 import { TABLES, EX, SALE } from '@/lib/silk/schema';
 import { parseCsv, toRecords, field, money, sundayFromFilename } from '@/lib/silk/csv';
 
@@ -30,7 +30,7 @@ type LineItem = {
     unitQty?: number; perUnit?: number; unitOfMeasure?: string; unitPrice?: number; totalAmount?: number;
     vendor?: string; invoice?: string; location?: string; bank?: string; card?: string; cardRaw?: string;
 };
-type FileState = { file: File; status: 'queued' | 'parsing' | 'creating' | 'done' | 'error'; created: number; found: number; error?: string; note?: string };
+type FileState = { file: File; status: 'queued' | 'parsing' | 'creating' | 'done' | 'error'; created: number; found: number; error?: string; note?: string; locId?: string };
 type Flag = { tone: 'warn' | 'info'; text: string };
 type RunResult = { created: number; flags: Flag[]; href: string; label: string } | null;
 
@@ -99,7 +99,6 @@ function Uploader() {
     const locIdByName = useMemo(() => { const m = new Map<string, string>(); for (const l of locations) m.set((l.name || '').trim(), l.id); return m; }, [locations]);
 
     const [type, setType] = useState<ReportType>('expense');
-    const [locId, setLocId] = useState('');
     const [files, setFiles] = useState<FileState[]>([]);
     const [running, setRunning] = useState(false);
     const [result, setResult] = useState<RunResult>(null);
@@ -124,6 +123,7 @@ function Uploader() {
     }
     function removeFile(i: number) { setFiles(prev => prev.filter((_, idx) => idx !== i)); }
     const setStatus = (i: number, patch: Partial<FileState>) => setFiles(prev => prev.map((f, idx) => (idx === i ? { ...f, ...patch } : f)));
+    const setFileLoc = (i: number, locId: string) => setFiles(prev => prev.map((f, idx) => (idx === i ? { ...f, locId } : f)));
 
     // ── Expense run ──────────────────────────────────────────────────────────
     function buildVendorMap() { const m = new Map<string, string>(); for (const v of vendors) { const n = (v.name || '').trim().toLowerCase(); if (n) m.set(n, v.id); } return m; }
@@ -208,8 +208,10 @@ function Uploader() {
         let created = 0, noWeek = 0; const weeksUsed = new Set<string>();
         for (let i = 0; i < files.length; i++) {
             if (files[i].status === 'done') continue;
+            const fileLoc = files[i].locId;
             try {
                 setStatus(i, { status: 'parsing', error: undefined });
+                if (!fileLoc) { setStatus(i, { status: 'error', error: 'Pick a location for this file first.' }); continue; }
                 const sunday = sundayFromFilename(files[i].file.name);
                 if (!sunday) { noWeek++; setStatus(i, { status: 'error', error: 'Could not read the week from the filename (expects item-sales-summary-YYYY-MM-DD-…).' }); continue; }
                 const text = await fileToText(files[i].file);
@@ -223,7 +225,7 @@ function Uploader() {
                     const variation = field(r, ['Item Variation', 'Variation']);
                     const sold = Number(field(r, ['Items Sold', 'Units Sold']).replace(/[, ]/g, ''));
                     const net = money(field(r, ['Net Sales']));
-                    const f: Record<string, unknown> = { [SALE.date]: sunday, [SALE.locations]: [locId] };
+                    const f: Record<string, unknown> = { [SALE.date]: sunday, [SALE.locations]: [fileLoc] };
                     if (item) f[SALE.item] = item;
                     if (variation) f[SALE.itemVariation] = variation;
                     if (Number.isFinite(sold)) f[SALE.itemsSold] = sold;
@@ -263,13 +265,15 @@ function Uploader() {
     }
 
     const accept = type === 'sales' ? '.csv,text/csv' : '.pdf,.csv,image/*,application/pdf,text/csv';
-    const canRun = files.length > 0 && !running && type !== 'payroll' && (type !== 'sales' || !!locId);
+    // Sales rows need a location each — set per file in the list below.
+    const salesNeedsLoc = type === 'sales' && files.some(f => !f.locId);
+    const canRun = files.length > 0 && !running && type !== 'payroll' && !salesNeedsLoc;
     // Live run tallies (derived from the per-file state the run loop updates — no extra cost).
     const createdSoFar = files.reduce((s, f) => s + f.created, 0);
     const filesDone = files.filter(f => f.status === 'done' || f.status === 'error').length;
     const copy = type === 'expense'
         ? 'Invoices, receipts and bank/card statements — PDF, CSV or photo. Claude reads each and files line items as draft expenses. The location is detected from each document.'
-        : 'Square item-sales-summary CSVs. The week is read from the filename; one Sales row is created per line for the chosen location.';
+        : 'Square item-sales-summary CSVs — add a file per location (763, 869…), choose each one’s location below, and run them all at once. The week is read from each filename.';
 
     return (
         <div style={{ width: '100%', maxWidth: '820px', margin: '0 auto', padding: `${isNarrow ? '20px' : '34px'} ${isNarrow ? '16px' : '26px'} 70px` }}>
@@ -296,18 +300,6 @@ function Uploader() {
             ) : (
                 <>
                     <p style={{ fontSize: '15px', color: 'var(--text-muted)', margin: '0 0 18px', lineHeight: 1.55 }}>{copy}</p>
-
-                    {/* Location — Sales only (expense location is detected from the document) */}
-                    {type === 'sales' && (
-                        <div style={{ ...glass(), padding: '16px', marginBottom: '16px' }}>
-                            <div style={{ fontFamily: MONO, fontSize: '10px', fontWeight: 700, letterSpacing: '0.12em', textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: '10px' }}>Location (required — applied to every row)</div>
-                            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-                                {locations.map(l => (
-                                    <button key={l.id} onClick={() => setLocId(l.id)} disabled={running} style={{ padding: '9px 17px', borderRadius: '999px', cursor: running ? 'default' : 'pointer', fontFamily: BODY, fontSize: '14px', fontWeight: 700, background: locId === l.id ? 'var(--accent)' : 'var(--glass-bg)', color: locId === l.id ? 'var(--accent-text)' : 'var(--text-primary)', border: '1px solid var(--glass-border)' }}>{l.name || '(location)'}</button>
-                                ))}
-                            </div>
-                        </div>
-                    )}
 
                     {/* Dropzone */}
                     <div onClick={() => inputRef.current?.click()} onDragOver={e => { e.preventDefault(); setDrag(true); }} onDragLeave={() => setDrag(false)} onDrop={e => { e.preventDefault(); setDrag(false); addFiles(e.dataTransfer.files); }}
@@ -340,6 +332,14 @@ function Uploader() {
                                         <div style={{ fontSize: '13.5px', fontWeight: 600, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{fs.file.name}</div>
                                         <div style={{ fontSize: '12px', color: fs.status === 'error' ? PALETTE.rust : 'var(--text-muted)' }}>{statusText(fs, type)}</div>
                                     </div>
+                                    {/* Per-file location — each Sales CSV is tagged to the location you pick here */}
+                                    {type === 'sales' && fs.status !== 'done' && (
+                                        <select value={fs.locId ?? ''} onChange={e => setFileLoc(i, e.target.value)} disabled={running}
+                                            style={{ ...inputStyle, width: 'auto', flex: '0 0 auto', maxWidth: '150px', padding: '7px 10px', fontSize: '13px', fontWeight: 700, borderColor: fs.locId ? 'var(--glass-border)' : 'var(--accent-2)' }}>
+                                            <option value="">Location?</option>
+                                            {locations.map(l => <option key={l.id} value={l.id}>{l.name || '(location)'}</option>)}
+                                        </select>
+                                    )}
                                     <StatusBadge fs={fs} />
                                     {!running && fs.status !== 'done' && (
                                         <button onClick={() => removeFile(i)} aria-label="Remove" style={{ width: '28px', height: '28px', borderRadius: '8px', border: 'none', background: 'rgba(50,70,79,0.08)', color: 'var(--text-muted)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}><XIcon size={14} weight="bold" /></button>
@@ -354,7 +354,7 @@ function Uploader() {
                         <Button onClick={run} disabled={!canRun} style={{ padding: '13px 22px', fontSize: '14px' }}>
                             {running ? 'Working…' : <><SparkleIcon size={17} weight="fill" /> Process {files.length || ''} file{files.length === 1 ? '' : 's'}</>}
                         </Button>
-                        {type === 'sales' && !locId && files.length > 0 && <span style={{ fontSize: '13px', color: PALETTE.rust, fontWeight: 600 }}>Pick a location first.</span>}
+                        {salesNeedsLoc && files.length > 0 && <span style={{ fontSize: '13px', color: PALETTE.rust, fontWeight: 600 }}>Set a location for each file.</span>}
                     </div>
 
                     {/* Flag summary (the checkpoint) */}

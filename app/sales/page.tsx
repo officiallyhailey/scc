@@ -50,6 +50,8 @@ function Sales() {
     const [week, setWeek] = useState('all');
     const [loc, setLoc] = useState('all');
     const [dept, setDept] = useState('all');
+    const [product, setProduct] = useState('all'); // 'all' | 'none' | <productId>
+    const [sort, setSort] = useState('all');         // 'all' (newest) | 'item' | 'sold' | 'net'
     const [q, setQ] = useState('');
     const [openId, setOpenId] = useState<string | null>(null);
     const [creating, setCreating] = useState(false);
@@ -64,20 +66,41 @@ function Sales() {
         for (const r of sales) for (const d of selectNames(r, SALE.department)) s.add(d);
         return Array.from(s).sort();
     }, [sales]);
+    // Products actually linked across the sales rows (keeps the filter list short + relevant).
+    const productOpts = useMemo(() => {
+        const ids = new Set<string>();
+        for (const r of sales) for (const id of linkIds(r, SALE.linkedProduct)) ids.add(id);
+        return Array.from(ids)
+            .map(id => ({ value: id, label: productNames.get(id) || '(product)' }))
+            .sort((a, b) => a.label.localeCompare(b.label));
+    }, [sales, productNames]);
 
     const rows = useMemo(() => {
         const needle = q.trim().toLowerCase();
-        return sales
+        const filtered = sales
             .filter(r => week === 'all' || str(r, SALE.weekStart) === week)
             .filter(r => loc === 'all' || linkIds(r, SALE.locations).includes(loc))
             .filter(r => dept === 'all' || selectNames(r, SALE.department).includes(dept))
             .filter(r => {
+                if (product === 'all') return true;
+                const ids = linkIds(r, SALE.linkedProduct);
+                return product === 'none' ? ids.length === 0 : ids.includes(product);
+            })
+            .filter(r => {
                 if (!needle) return true;
                 return [str(r, SALE.item), str(r, SALE.itemVariation), selectNames(r, SALE.department).join(' ')].join(' ').toLowerCase().includes(needle);
-            })
-            .sort((a, b) => weekKey(str(b, SALE.weekStart)).localeCompare(weekKey(str(a, SALE.weekStart))) || num(b, SALE.netSales) - num(a, SALE.netSales))
-            .slice(0, 600);
-    }, [sales, week, loc, dept, q]);
+            });
+        const byRecent = (a: RecordModel, b: RecordModel) => weekKey(str(b, SALE.weekStart)).localeCompare(weekKey(str(a, SALE.weekStart))) || num(b, SALE.netSales) - num(a, SALE.netSales);
+        filtered.sort((a, b) => {
+            switch (sort) {
+                case 'item': return str(a, SALE.item).localeCompare(str(b, SALE.item)) || byRecent(a, b);
+                case 'sold': return num(b, SALE.itemsSold) - num(a, SALE.itemsSold) || byRecent(a, b);
+                case 'net': return num(b, SALE.netSales) - num(a, SALE.netSales) || byRecent(a, b);
+                default: return byRecent(a, b);
+            }
+        });
+        return filtered.slice(0, 600);
+    }, [sales, week, loc, dept, product, sort, q]);
 
     const total = useMemo(() => rows.reduce((s, r) => s + num(r, SALE.netSales), 0), [rows]);
     const openRec = openId ? sales.find(r => r.id === openId) ?? null : null;
@@ -107,6 +130,8 @@ function Sales() {
                 <Sel value={week} onChange={setWeek} all="All weeks" opts={weeks.map(w => ({ value: w, label: w }))} />
                 <Sel value={loc} onChange={setLoc} all="All locations" opts={locations.map(l => ({ value: l.id, label: l.name || '(loc)' }))} />
                 <Sel value={dept} onChange={setDept} all="All departments" opts={depts.map(d => ({ value: d, label: d }))} />
+                <Sel value={product} onChange={setProduct} all="All products" opts={[{ value: 'none', label: '— No linked product —' }, ...productOpts]} />
+                <Sel value={sort} onChange={setSort} all="Sort: Newest" opts={[{ value: 'item', label: 'Sort: Item A–Z' }, { value: 'sold', label: 'Sort: Most sold' }, { value: 'net', label: 'Sort: Top net sales' }]} />
             </div>
 
             {rows.length === 0 ? (
@@ -119,26 +144,35 @@ function Sales() {
                     {rows.map((r, i) => {
                         const item = str(r, SALE.item) || '(item)';
                         const variation = str(r, SALE.itemVariation);
-                        const depts = selectNames(r, SALE.department);
+                        // Square exports the default variation as "Regular"/"Regular Price" — that's noise, hide it.
+                        const showVar = !!variation && variation !== item && !/^regular( price)?$/i.test(variation.trim());
+                        const deptNames = selectNames(r, SALE.department);
+                        const productIds = linkIds(r, SALE.linkedProduct);
+                        const productName = productIds.length ? (productNames.get(productIds[0]) || '') : '';
                         const sold = num(r, SALE.itemsSold);
                         const date = str(r, SALE.date);
                         return (
                             <div key={r.id} onClick={() => setOpenId(r.id)}
                                 onMouseEnter={e => { e.currentTarget.style.background = 'var(--glass-bg-soft)'; }}
                                 onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}
-                                style={{ display: 'flex', alignItems: 'center', gap: '14px', padding: '13px 14px', borderRadius: 'var(--radius-sm)', cursor: 'pointer', borderBottom: i === rows.length - 1 ? 'none' : '1px solid var(--hairline)' }}>
-                                <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: '5px' }}>
-                                    <span style={{ fontWeight: 700, fontSize: '14px', color: 'var(--text-primary)' }}>{item}{variation && variation !== item ? ` · ${variation}` : ''}</span>
-                                    {depts.length > 0 ? (
-                                        <div style={{ display: 'flex', gap: '5px', flexWrap: 'wrap' }}>{depts.map(d => <Pill key={d} text={d} tone={deptTone(d)} />)}</div>
-                                    ) : (
-                                        <span style={{ fontSize: '12px', fontStyle: 'italic', color: PALETTE.rust }}>link a product to categorize</span>
-                                    )}
+                                style={{ display: 'flex', alignItems: 'center', gap: '14px', padding: '9px 14px', borderRadius: 'var(--radius-sm)', cursor: 'pointer', borderBottom: i === rows.length - 1 ? 'none' : '1px solid var(--hairline)' }}>
+                                <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                                    <span style={{ fontWeight: 700, fontSize: '14px', color: 'var(--text-primary)' }}>{item}{showVar ? ` · ${variation}` : ''}</span>
+                                    {/* department pill(s) + the linked product name — or a gold dash when nothing is linked */}
+                                    <div style={{ display: 'flex', gap: '6px', alignItems: 'center', flexWrap: 'wrap' }}>
+                                        {deptNames.map(d => <Pill key={d} text={d} tone={deptTone(d)} />)}
+                                        {productName
+                                            ? <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>{productName}</span>
+                                            : <span title="No linked product" style={{ fontFamily: DISPLAY, fontSize: '16px', lineHeight: 1, color: PALETTE.gold }}>–</span>}
+                                    </div>
                                 </div>
-                                <div style={{ flexShrink: 0, textAlign: 'right', display: 'flex', flexDirection: 'column', gap: '3px', minWidth: '96px' }}>
+                                <div style={{ flexShrink: 0, textAlign: 'right', display: 'flex', flexDirection: 'column', gap: '2px', minWidth: '96px' }}>
                                     <span style={{ fontFamily: DISPLAY, fontSize: '18px', color: 'var(--text-primary)' }}>{usd(num(r, SALE.netSales))}</span>
-                                    {sold ? <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>{sold} sold</span> : null}
-                                    {date && <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>{date}</span>}
+                                    {(sold || date) && (
+                                        <span style={{ fontSize: '12px', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
+                                            {sold ? `${sold} sold` : ''}{sold && date ? ' · ' : ''}{date}
+                                        </span>
+                                    )}
                                 </div>
                             </div>
                         );
