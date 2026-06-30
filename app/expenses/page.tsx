@@ -287,17 +287,20 @@ function Expenses() {
             {/* Filters (all multi-select): search + Week / Vendor / Location / Department / Inventory / Bank.
                 position+zIndex lift the bar above the summary/list so the open dropdowns aren't covered
                 (those siblings each create a stacking context via backdrop-filter). */}
-            <div style={{ ...glass(), position: 'relative', zIndex: 40, padding: '10px', display: 'flex', gap: '10px', flexWrap: 'wrap', alignItems: 'center', marginBottom: '14px' }}>
-                <div style={{ position: 'relative', flex: '1 1 200px', minWidth: '160px' }}>
+            <div style={{ ...glass(), position: 'relative', zIndex: 40, padding: '10px', marginBottom: '14px',
+                ...(isNarrow
+                    ? { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }
+                    : { display: 'flex', gap: '10px', flexWrap: 'wrap', alignItems: 'center' }) }}>
+                <div style={{ position: 'relative', ...(isNarrow ? { gridColumn: '1 / -1' } : { flex: '1 1 200px', minWidth: '160px' }) }}>
                     <MagnifyingGlassIcon size={16} weight="bold" style={{ position: 'absolute', left: '11px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
                     <input value={q} onChange={e => setQ(e.target.value)} placeholder="Search…" style={{ ...inputStyle, paddingLeft: '34px' }} />
                 </div>
-                <MultiFilter value={week} onChange={setWeek} allLabel="All weeks" options={[{ value: '__none__', label: '— No week —' }, ...weeks.map(w => ({ value: w, label: w }))]} />
-                <MultiFilter value={vendor} onChange={setVendor} allLabel="All vendors" searchable options={[{ value: '__none__', label: '— No vendor —' }, ...vendorOptions.map(v => ({ value: v.id, label: v.name }))]} />
-                <MultiFilter value={loc} onChange={setLoc} allLabel="All locations" options={[{ value: '__none__', label: '— No location —' }, ...locations.map(l => ({ value: l.id, label: l.name || '(loc)' }))]} />
-                <MultiFilter value={dept} onChange={setDept} allLabel="All departments" options={[{ value: '__none__', label: '— No category —' }, ...deptOptions.map(d => ({ value: d, label: d }))]} />
-                <MultiFilter value={invFilter} onChange={setInvFilter} allLabel="All inventory" searchable options={[{ value: '__none__', label: '— No inventory item —' }, ...inventoryOptions.map(o => ({ value: o.id, label: o.name }))]} />
-                <MultiFilter value={bank} onChange={setBank} allLabel="All banks" options={[{ value: '__none__', label: '— No bank —' }, ...bankOptions.map(b => ({ value: b, label: b }))]} />
+                <MultiFilter block={isNarrow} value={week} onChange={setWeek} allLabel="All weeks" options={[{ value: '__none__', label: '— No week —' }, ...weeks.map(w => ({ value: w, label: w }))]} />
+                <MultiFilter block={isNarrow} value={vendor} onChange={setVendor} allLabel="All vendors" searchable options={[{ value: '__none__', label: '— No vendor —' }, ...vendorOptions.map(v => ({ value: v.id, label: v.name }))]} />
+                <MultiFilter block={isNarrow} value={loc} onChange={setLoc} allLabel="All locations" options={[{ value: '__none__', label: '— No location —' }, ...locations.map(l => ({ value: l.id, label: l.name || '(loc)' }))]} />
+                <MultiFilter block={isNarrow} value={dept} onChange={setDept} allLabel="All departments" options={[{ value: '__none__', label: '— No category —' }, ...deptOptions.map(d => ({ value: d, label: d }))]} />
+                <MultiFilter block={isNarrow} value={invFilter} onChange={setInvFilter} allLabel="All inventory" searchable options={[{ value: '__none__', label: '— No inventory item —' }, ...inventoryOptions.map(o => ({ value: o.id, label: o.name }))]} />
+                <MultiFilter block={isNarrow} value={bank} onChange={setBank} allLabel="All banks" options={[{ value: '__none__', label: '— No bank —' }, ...bankOptions.map(b => ({ value: b, label: b }))]} />
             </div>
 
             {/* Weekly upload-status summary — appears once a week is selected */}
@@ -453,7 +456,7 @@ function Row({
     }
 
     // The four inline-editable fields (shared between the wide and narrow layouts).
-    const fill = !isNarrow;
+    const fill = true; // chips fill their grid cell in both the wide and narrow (2-col) layouts
     const vendorEd = <InlineLink value={linkIds(rec, EX.vendors)} names={vendorNames} options={vendors} placeholder="Vendor" fill={fill} saving={savingField === 'vendor'} onToggle={onToggle} onChange={v => update('vendor', { [EX.vendors]: v })} onCreate={onCreateVendor} />;
     const locEd = <InlineLink value={linkIds(rec, EX.locations)} names={locationNames} options={locations} placeholder="Location" fill={fill} saving={savingField === 'location'} onToggle={onToggle} onChange={v => update('location', { [EX.locations]: v })} />;
     const catEd = <InlineMulti value={cats} options={catChoices} placeholder="Category" fill={fill} saving={savingField === 'category'} onToggle={onToggle} onChange={v => update('category', { [EX.category]: v })} />;
@@ -490,22 +493,22 @@ function Row({
         );
     }
 
-    // Narrow: item line, then the editable fields wrap below, amount on the right.
+    // Narrow: item + amount on the top line, then the editable fields in a uniform 2-col grid.
     return (
         <div {...shared}
             style={{
-                display: 'flex', alignItems: 'center', gap: '12px', padding: '9px 14px',
+                display: 'flex', flexDirection: 'column', gap: '9px', padding: '11px 14px',
                 borderRadius: 'var(--radius-sm)', cursor: 'pointer',
                 position: 'relative', zIndex: openCount > 0 ? 5 : 'auto',
                 borderBottom: last ? 'none' : '1px solid var(--hairline)',
             }}>
-            <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                {itemCell}
-                <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', alignItems: 'center' }}>
-                    {vendorEd}{locEd}{catEd}{invEd}
-                </div>
+            <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '12px' }}>
+                <div style={{ flex: 1, minWidth: 0 }}>{itemCell}</div>
+                <div style={{ flexShrink: 0 }}>{amountCell}</div>
             </div>
-            <div style={{ flexShrink: 0, minWidth: '92px' }}>{amountCell}</div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px' }}>
+                {vendorEd}{locEd}{catEd}{invEd}
+            </div>
         </div>
     );
 }

@@ -101,16 +101,19 @@ function Inventory() {
             </div>
 
             {/* filters */}
-            <div style={{ ...glass(), padding: '10px', display: 'flex', gap: '10px', flexWrap: 'wrap', alignItems: 'center', marginBottom: '14px' }}>
-                <div style={{ position: 'relative', flex: '1 1 200px', minWidth: '170px' }}>
+            <div style={{ ...glass(), padding: '10px', marginBottom: '14px',
+                ...(isNarrow
+                    ? { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }
+                    : { display: 'flex', gap: '10px', flexWrap: 'wrap', alignItems: 'center' }) }}>
+                <div style={{ position: 'relative', ...(isNarrow ? { gridColumn: '1 / -1' } : { flex: '1 1 200px', minWidth: '170px' }) }}>
                     <MagnifyingGlassIcon size={16} weight="bold" style={{ position: 'absolute', left: '11px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
                     <input value={q} onChange={e => setQ(e.target.value)} placeholder="Search items, vendors…" style={{ ...inputStyle, paddingLeft: '34px' }} />
                 </div>
-                <Sel value={loc} onChange={setLoc} all="All locations" opts={locations.map(l => ({ value: l.id, label: l.name || '(loc)' }))} />
-                <Sel value={dept} onChange={setDept} all="All departments" opts={depts.map(d => ({ value: d, label: d }))} />
-                <Sel value={type} onChange={setType} all="All types" opts={types.map(t => ({ value: t, label: t }))} />
-                <Sel value={vendor} onChange={setVendor} all="All vendors" opts={vendorOptions.map(v => ({ value: v.id, label: v.name }))} />
-                <select value={sort} onChange={e => setSort(e.target.value as 'item' | 'price' | 'created')} style={{ ...inputStyle, width: 'auto', flex: '0 0 auto' }} title="Sort by">
+                <Sel block={isNarrow} value={loc} onChange={setLoc} all="All locations" opts={locations.map(l => ({ value: l.id, label: l.name || '(loc)' }))} />
+                <Sel block={isNarrow} value={dept} onChange={setDept} all="All departments" opts={depts.map(d => ({ value: d, label: d }))} />
+                <Sel block={isNarrow} value={type} onChange={setType} all="All types" opts={types.map(t => ({ value: t, label: t }))} />
+                <Sel block={isNarrow} value={vendor} onChange={setVendor} all="All vendors" opts={vendorOptions.map(v => ({ value: v.id, label: v.name }))} />
+                <select value={sort} onChange={e => setSort(e.target.value as 'item' | 'price' | 'created')} style={{ ...inputStyle, width: isNarrow ? '100%' : 'auto', flex: isNarrow ? '1 1 auto' : '0 0 auto' }} title="Sort by">
                     <option value="item">Sort: Item</option>
                     <option value="price">Sort: Unit Price</option>
                     <option value="created">Sort: Created Date</option>
@@ -141,9 +144,9 @@ function Inventory() {
     );
 }
 
-function Sel({ value, onChange, all, opts }: { value: string; onChange: (v: string) => void; all: string; opts: { value: string; label: string }[] }) {
+function Sel({ value, onChange, all, opts, block }: { value: string; onChange: (v: string) => void; all: string; opts: { value: string; label: string }[]; block?: boolean }) {
     return (
-        <select value={value} onChange={e => onChange(e.target.value)} style={{ ...inputStyle, width: 'auto', flex: '0 0 auto', maxWidth: '170px' }}>
+        <select value={value} onChange={e => onChange(e.target.value)} style={{ ...inputStyle, width: block ? '100%' : 'auto', flex: block ? '1 1 auto' : '0 0 auto', maxWidth: block ? 'none' : '170px' }}>
             <option value="all">{all}</option>
             {opts.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
         </select>
@@ -174,7 +177,7 @@ function InvRow({
         try { await table.updateRecordAsync(rec, fields); } catch { /* SWR keeps the old value */ } finally { setSavingField(null); }
     }
 
-    const fill = !isNarrow;
+    const fill = true; // chips fill their grid cell in both the wide and narrow (2-col) layouts
     const locEd = <InlineMultiLink value={linkIds(rec, INV.trackingLocations)} names={locationNames} options={locations} placeholder="Locations" fill={fill} saving={savingField === 'loc'} onToggle={onToggle} onChange={v => update('loc', { [INV.trackingLocations]: v })} />;
     const venEd = <InlineLink value={linkIds(rec, INV.vendor)} names={vendorNames} options={vendors} placeholder="Vendor" fill={fill} saving={savingField === 'vendor'} onToggle={onToggle} onChange={v => update('vendor', { [INV.vendor]: v })} />;
     const depEd = <InlineSelect value={selectName(rec, INV.department)} options={deptChoices} placeholder="Department" fill={fill} saving={savingField === 'dept'} onToggle={onToggle} onChange={v => update('dept', { [INV.department]: v || null })} />;
@@ -215,22 +218,22 @@ function InvRow({
         );
     }
 
-    // Narrow: item line, then the editable fields wrap below, price on the right.
+    // Narrow: item + price on the top line, then the editable fields in a uniform 2-col grid.
     return (
         <div {...shared}
             style={{
-                display: 'flex', alignItems: 'center', gap: '12px', padding: '9px 14px',
+                display: 'flex', flexDirection: 'column', gap: '9px', padding: '11px 14px',
                 borderRadius: 'var(--radius-sm)', cursor: 'pointer',
                 position: 'relative', zIndex: openCount > 0 ? 5 : 'auto',
                 borderBottom: last ? 'none' : '1px solid var(--hairline)',
             }}>
-            <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                {itemCell}
-                <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', alignItems: 'center' }}>
-                    {locEd}{venEd}{depEd}{typeEd}
-                </div>
+            <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '12px' }}>
+                <div style={{ flex: 1, minWidth: 0 }}>{itemCell}</div>
+                <div style={{ flexShrink: 0 }}>{amountCell}</div>
             </div>
-            <div style={{ flexShrink: 0, minWidth: '92px' }}>{amountCell}</div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px' }}>
+                {locEd}{venEd}{depEd}{typeEd}
+            </div>
         </div>
     );
 }

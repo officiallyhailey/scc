@@ -85,10 +85,10 @@ export function MultiSelectDropdown({ options, value, onChange, placeholder }: {
 // selection means "no filter" (all rows). Values can include a '__none__' sentinel
 // that callers treat as "this field is blank".
 export function MultiFilter({
-    allLabel, options, value, onChange, searchable,
+    allLabel, options, value, onChange, searchable, block,
 }: {
     allLabel: string; options: { value: string; label: string }[];
-    value: string[]; onChange: (v: string[]) => void; searchable?: boolean;
+    value: string[]; onChange: (v: string[]) => void; searchable?: boolean; block?: boolean;
 }) {
     const [open, setOpen] = useState(false);
     const [q, setQ] = useState('');
@@ -107,9 +107,9 @@ export function MultiFilter({
         ? options.filter(o => o.label.toLowerCase().includes(q.trim().toLowerCase()))
         : options;
     return (
-        <div ref={ref} style={{ position: 'relative', flex: '0 0 auto' }}>
+        <div ref={ref} style={{ position: 'relative', flex: block ? '1 1 auto' : '0 0 auto', width: block ? '100%' : undefined, minWidth: 0 }}>
             <button type="button" onClick={() => setOpen(o => !o)}
-                style={{ ...inputStyle, width: 'auto', maxWidth: '210px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '7px', textAlign: 'left' }}>
+                style={{ ...inputStyle, width: block ? '100%' : 'auto', maxWidth: block ? 'none' : '210px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '7px', textAlign: 'left' }}>
                 <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: value.length ? 'var(--text-primary)' : 'var(--text-muted)', fontWeight: value.length ? 700 : 400 }}>{label}</span>
                 <CaretDownIcon size={14} weight="bold" style={{ marginLeft: 'auto', flexShrink: 0, color: 'var(--text-muted)', transform: open ? 'rotate(180deg)' : 'none', transition: 'transform .12s' }} />
             </button>

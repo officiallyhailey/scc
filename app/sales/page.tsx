@@ -178,16 +178,19 @@ function Sales() {
 
             {/* Filters (multi-select except Sort). position+zIndex lift the bar so open
                 dropdowns aren't covered by the list below (both are backdrop-filter panels). */}
-            <div style={{ ...glass(), position: 'relative', zIndex: 40, padding: '10px', display: 'flex', gap: '10px', flexWrap: 'wrap', alignItems: 'center', marginBottom: '14px' }}>
-                <div style={{ position: 'relative', flex: '1 1 200px', minWidth: '160px' }}>
+            <div style={{ ...glass(), position: 'relative', zIndex: 40, padding: '10px', marginBottom: '14px',
+                ...(isNarrow
+                    ? { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }
+                    : { display: 'flex', gap: '10px', flexWrap: 'wrap', alignItems: 'center' }) }}>
+                <div style={{ position: 'relative', ...(isNarrow ? { gridColumn: '1 / -1' } : { flex: '1 1 200px', minWidth: '160px' }) }}>
                     <MagnifyingGlassIcon size={16} weight="bold" style={{ position: 'absolute', left: '11px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
                     <input value={q} onChange={e => setQ(e.target.value)} placeholder="Search items…" style={{ ...inputStyle, paddingLeft: '34px' }} />
                 </div>
-                <MultiFilter value={week} onChange={setWeek} allLabel="All weeks" options={weeks.map(w => ({ value: w, label: w }))} />
-                <MultiFilter value={loc} onChange={setLoc} allLabel="All locations" options={locations.map(l => ({ value: l.id, label: l.name || '(loc)' }))} />
-                <MultiFilter value={dept} onChange={setDept} allLabel="All departments" options={depts.map(d => ({ value: d, label: d }))} />
-                <MultiFilter value={product} onChange={setProduct} allLabel="All products" searchable options={[{ value: '__none__', label: '— No linked product —' }, ...productOpts]} />
-                <Sel value={sort} onChange={setSort} all="Sort: Newest" opts={[{ value: 'item', label: 'Sort: Item A–Z' }, { value: 'sold', label: 'Sort: Most sold' }, { value: 'net', label: 'Sort: Top net sales' }]} />
+                <MultiFilter block={isNarrow} value={week} onChange={setWeek} allLabel="All weeks" options={weeks.map(w => ({ value: w, label: w }))} />
+                <MultiFilter block={isNarrow} value={loc} onChange={setLoc} allLabel="All locations" options={locations.map(l => ({ value: l.id, label: l.name || '(loc)' }))} />
+                <MultiFilter block={isNarrow} value={dept} onChange={setDept} allLabel="All departments" options={depts.map(d => ({ value: d, label: d }))} />
+                <MultiFilter block={isNarrow} value={product} onChange={setProduct} allLabel="All products" searchable options={[{ value: '__none__', label: '— No linked product —' }, ...productOpts]} />
+                <Sel block={isNarrow} value={sort} onChange={setSort} all="Sort: Newest" opts={[{ value: 'item', label: 'Sort: Item A–Z' }, { value: 'sold', label: 'Sort: Most sold' }, { value: 'net', label: 'Sort: Top net sales' }]} />
             </div>
 
             {/* Weekly category breakdown — one card per selected week (compare across weeks) */}
@@ -230,7 +233,7 @@ function Sales() {
                 <div style={{ ...glass(), padding: '4px', display: 'flex', flexDirection: 'column' }}>
                     {rows.map((r, i) => (
                         <SaleRow key={r.id} rec={r} last={i === rows.length - 1} table={salesTable} isNarrow={isNarrow}
-                            locations={locations} products={products} locationNames={locationNames} productNames={productNames}
+                            products={products} productNames={productNames}
                             onOpen={() => setOpenId(r.id)} />
                     ))}
                 </div>
@@ -251,24 +254,23 @@ function Sales() {
     );
 }
 
-function Sel({ value, onChange, all, opts }: { value: string; onChange: (v: string) => void; all: string; opts: { value: string; label: string }[] }) {
+function Sel({ value, onChange, all, opts, block }: { value: string; onChange: (v: string) => void; all: string; opts: { value: string; label: string }[]; block?: boolean }) {
     return (
-        <select value={value} onChange={e => onChange(e.target.value)} style={{ ...inputStyle, width: 'auto', flex: '0 0 auto', maxWidth: '180px' }}>
+        <select value={value} onChange={e => onChange(e.target.value)} style={{ ...inputStyle, width: block ? '100%' : 'auto', flex: block ? '1 1 auto' : '0 0 auto', maxWidth: block ? 'none' : '180px' }}>
             <option value="all">{all}</option>
             {opts.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
         </select>
     );
 }
 
-// One sales row. Like the Expenses row: aligned columns with inline-editable Location and
-// Linked Product (Category is read-only — it resolves from the product). Edits write straight
-// to Airtable; the InlineLink shows a loading bar while saving.
+// One sales row. Aligned columns with inline-editable Linked Product (Category is read-only —
+// it resolves from the product). Location is edited in the detail drawer, not on the row.
+// Edits write straight to Airtable; the InlineLink shows a loading bar while saving.
 function SaleRow({
-    rec, last, table, isNarrow, locations, products, locationNames, productNames, onOpen,
+    rec, last, table, isNarrow, products, productNames, onOpen,
 }: {
     rec: RecordModel; last: boolean; table: TableModel; isNarrow: boolean;
-    locations: RecordModel[]; products: RecordModel[];
-    locationNames: Map<string, string>; productNames: Map<string, string>;
+    products: RecordModel[]; productNames: Map<string, string>;
     onOpen: () => void;
 }) {
     const item = str(rec, SALE.item) || '(item)';
@@ -286,13 +288,13 @@ function SaleRow({
         try { await table.updateRecordAsync(rec, fields); } catch { /* SWR keeps the old value */ } finally { setSavingField(null); }
     }
 
-    const fill = !isNarrow;
-    const locEd = <InlineLink value={linkIds(rec, SALE.locations)} names={locationNames} options={locations} placeholder="Location" fill={fill} saving={savingField === 'location'} onToggle={onToggle} onChange={v => update('location', { [SALE.locations]: v })} />;
+    const fill = true; // chips fill their grid cell in both the wide and narrow (2-col) layouts
     const prodEd = <InlineLink value={linkIds(rec, SALE.linkedProduct)} names={productNames} options={products} placeholder="Product" fill={fill} saving={savingField === 'product'} onToggle={onToggle} onChange={v => update('product', { [SALE.linkedProduct]: v })} />;
-    // Category is read-only (resolved from the product): plain dept name(s), or a gold dash.
+    // Category is read-only (resolves from the product) — styled like a chip (no caret) so it
+    // sits uniformly next to the editable fields; click the row to change it via the product.
     const catCell = (
-        <div style={{ minWidth: 0, fontSize: '13px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: deptNames.length ? 'var(--text-primary)' : PALETTE.gold }} title={deptNames.join(', ')}>
-            {deptNames.length ? deptNames.join(', ') : '–'}
+        <div title={deptNames.join(', ')} style={{ display: 'flex', alignItems: 'center', width: '100%', minWidth: 0, padding: '3px 8px', borderRadius: '7px', border: '1px solid var(--hairline)', background: 'var(--glass-bg)', fontSize: '12px', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: deptNames.length ? 'var(--text-primary)' : 'var(--text-muted)' }}>
+            {deptNames.length ? deptNames.join(', ') : '— category —'}
         </div>
     );
     const itemCell = <span title={item} style={{ fontWeight: 700, fontSize: '14px', color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'block' }}>{item}{showVar ? ` · ${variation}` : ''}</span>;
@@ -309,40 +311,40 @@ function SaleRow({
         onMouseLeave: (e: React.MouseEvent<HTMLDivElement>) => { e.currentTarget.style.background = 'transparent'; },
     };
 
-    // Wide: one aligned grid row — Item | Location | Category | Linked Product | Amount.
+    // Wide: one aligned grid row — Item | Category | Linked Product | Amount.
     if (!isNarrow) {
         return (
             <div {...shared}
                 style={{
-                    display: 'grid', gridTemplateColumns: 'minmax(120px, 1.4fr) 1fr 0.9fr 1.2fr 150px',
+                    display: 'grid', gridTemplateColumns: 'minmax(140px, 1.6fr) 1fr 1.4fr 150px',
                     alignItems: 'center', gap: '10px', padding: '8px 14px',
                     borderRadius: 'var(--radius-sm)', cursor: 'pointer',
                     position: 'relative', zIndex: openCount > 0 ? 5 : 'auto',
                     borderBottom: last ? 'none' : '1px solid var(--hairline)',
                 }}>
                 <div style={{ minWidth: 0 }}>{itemCell}</div>
-                {locEd}{catCell}{prodEd}
+                {catCell}{prodEd}
                 {amountCell}
             </div>
         );
     }
 
-    // Narrow: item line, then the editable fields wrap below, amount on the right.
+    // Narrow: item + amount on the top line, then the fields in a uniform 2-col grid.
     return (
         <div {...shared}
             style={{
-                display: 'flex', alignItems: 'center', gap: '12px', padding: '9px 14px',
+                display: 'flex', flexDirection: 'column', gap: '9px', padding: '11px 14px',
                 borderRadius: 'var(--radius-sm)', cursor: 'pointer',
                 position: 'relative', zIndex: openCount > 0 ? 5 : 'auto',
                 borderBottom: last ? 'none' : '1px solid var(--hairline)',
             }}>
-            <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                {itemCell}
-                <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', alignItems: 'center' }}>
-                    {locEd}{catCell}{prodEd}
-                </div>
+            <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '12px' }}>
+                <div style={{ flex: 1, minWidth: 0 }}>{itemCell}</div>
+                <div style={{ flexShrink: 0 }}>{amountCell}</div>
             </div>
-            <div style={{ flexShrink: 0, minWidth: '92px' }}>{amountCell}</div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px' }}>
+                {catCell}{prodEd}
+            </div>
         </div>
     );
 }

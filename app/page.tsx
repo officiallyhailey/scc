@@ -55,10 +55,10 @@ export default function Home() {
                     <div style={{ position: 'relative', zIndex: 1 }}>
                         <div style={monoEyebrow}>// Silk City Coffee · Finance</div>
                         <h1 style={{ fontFamily: DISPLAY, fontWeight: 400, textTransform: 'uppercase', fontSize: isNarrow ? 'clamp(40px, 13vw, 60px)' : '78px', lineHeight: 0.97, letterSpacing: '0.01em', margin: '14px 0 0', color: 'var(--text-primary)' }}>
-                            Run the<br />weekly<span style={{ color: PALETTE.gold }}> numbers.</span>
+                            Run the<br /><span style={{ color: PALETTE.gold }}> numbers.</span>
                         </h1>
                         <p style={{ fontSize: isNarrow ? '15px' : '17px', lineHeight: 1.6, color: 'var(--text-muted)', maxWidth: '540px', margin: '18px 0 0' }}>
-                            Upload the week’s invoices and statements, let Claude file them, then tidy each expense before it rolls into the report.
+                            Part 1. Upload the week’s reports <br /> Part 2. Little silk agents go file them <br /> Part 3. Do a final review of the data populating the scorecard <br /> Part 4. Make informed decisions!
                         </p>
                     </div>
                 </section>
