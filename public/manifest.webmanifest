@@ -1,0 +1,17 @@
+{
+    "name": "Silk Finance",
+    "short_name": "Silk Finance",
+    "description": "Silk City Coffee — upload invoices & statements, review expenses, run weekly reports.",
+    "start_url": "/",
+    "display": "standalone",
+    "background_color": "#eef0ee",
+    "theme_color": "#eef0ee",
+    "icons": [
+        {
+            "src": "/icon.svg",
+            "sizes": "any",
+            "type": "image/svg+xml",
+            "purpose": "any maskable"
+        }
+    ]
+}

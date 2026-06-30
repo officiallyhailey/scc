@@ -1,0 +1,41 @@
+// String-enum stand-in for the Blocks SDK `FieldType`. The REST API and the SDK
+// both use these same string values, and our FieldModel.type returns the REST
+// string — so existing `field.type === FieldType.X` checks keep working.
+export const FieldType = {
+    SINGLE_LINE_TEXT: 'singleLineText',
+    MULTILINE_TEXT: 'multilineText',
+    RICH_TEXT: 'richText',
+    EMAIL: 'email',
+    URL: 'url',
+    NUMBER: 'number',
+    PERCENT: 'percent',
+    CURRENCY: 'currency',
+    SINGLE_SELECT: 'singleSelect',
+    MULTIPLE_SELECTS: 'multipleSelects',
+    SINGLE_COLLABORATOR: 'singleCollaborator',
+    MULTIPLE_COLLABORATORS: 'multipleCollaborators',
+    MULTIPLE_RECORD_LINKS: 'multipleRecordLinks',
+    DATE: 'date',
+    DATE_TIME: 'dateTime',
+    PHONE_NUMBER: 'phoneNumber',
+    MULTIPLE_ATTACHMENTS: 'multipleAttachments',
+    CHECKBOX: 'checkbox',
+    FORMULA: 'formula',
+    CREATED_TIME: 'createdTime',
+    ROLLUP: 'rollup',
+    COUNT: 'count',
+    MULTIPLE_LOOKUP_VALUES: 'multipleLookupValues',
+    AUTO_NUMBER: 'autoNumber',
+    BARCODE: 'barcode',
+    RATING: 'rating',
+    RICH_TEXT_AI: 'aiText',
+    AI_TEXT: 'aiText',
+    DURATION: 'duration',
+    LAST_MODIFIED_TIME: 'lastModifiedTime',
+    CREATED_BY: 'createdBy',
+    LAST_MODIFIED_BY: 'lastModifiedBy',
+    BUTTON: 'button',
+    EXTERNAL_SYNC_SOURCE: 'externalSyncSource',
+} as const;
+
+export type FieldType = (typeof FieldType)[keyof typeof FieldType];

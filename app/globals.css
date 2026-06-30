@@ -1,0 +1,100 @@
+/* Base reset only. Design tokens, the body font and the light/dark palette
+   live in theme.css (the single source of truth for colours). */
+
+*,
+*::before,
+*::after {
+    box-sizing: border-box;
+}
+
+html,
+body {
+    margin: 0;
+    padding: 0;
+    min-height: 100%;
+    background: var(--page);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+}
+
+@media (prefers-color-scheme: dark) {
+    html {
+        color-scheme: dark;
+    }
+}
+
+/* Scroll-progress "ping" at the bottom of the page (expanding ring + dot). */
+.dd-ping::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: 50%;
+    background: var(--accent);
+    animation: ddPing 1.1s cubic-bezier(0, 0, 0.2, 1) infinite;
+}
+
+@keyframes ddPing {
+    0% { transform: scale(1); opacity: 0.85; }
+    75%, 100% { transform: scale(3); opacity: 0; }
+}
+
+/* Continuous marquee (loading screen + shared) — two copies, translate -50%. */
+@keyframes ddMarquee { from { transform: translateX(0); } to { transform: translateX(-50%); } }
+
+/* Floating down-arrow scroll cue. */
+.dd-bob { animation: ddBob 1.6s ease-in-out infinite; }
+
+@keyframes ddBob {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(6px); }
+}
+
+/* "New" form live-fill: shimmer placeholder → fade the value in. */
+.dd-shimmer {
+    background: linear-gradient(90deg, var(--surface-2) 25%, var(--accent-soft) 50%, var(--surface-2) 75%);
+    background-size: 200% 100%;
+    animation: ddShimmer 1.3s ease-in-out infinite;
+}
+
+@keyframes ddShimmer {
+    0% { background-position: 200% 0; }
+    100% { background-position: -200% 0; }
+}
+
+.dd-fade-in { animation: ddFadeIn 0.5s ease-out; }
+
+@keyframes ddFadeIn {
+    from { opacity: 0; transform: translateY(6px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+/* Course-completion celebration: the check pops in, a ring bursts outward,
+   and a few confetti pieces fall. Used by the Courses modal. */
+.dd-pop { animation: ddPop 0.5s cubic-bezier(0.2, 1.3, 0.5, 1) both; }
+
+@keyframes ddPop {
+    0% { transform: scale(0); opacity: 0; }
+    60% { transform: scale(1.18); opacity: 1; }
+    100% { transform: scale(1); opacity: 1; }
+}
+
+.dd-burst { animation: ddBurst 0.7s ease-out forwards; }
+
+@keyframes ddBurst {
+    0% { transform: scale(0.5); opacity: 0.55; }
+    100% { transform: scale(2.6); opacity: 0; }
+}
+
+.dd-confetti { animation: ddConfetti 1.5s ease-in forwards; }
+
+@keyframes ddConfetti {
+    0% { transform: translateY(-10px) rotate(0deg); opacity: 1; }
+    100% { transform: translateY(220px) rotate(540deg); opacity: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .dd-ping::after, .dd-bob, .dd-shimmer, .dd-fade-in, .dd-loader-row,
+    .dd-pop, .dd-burst, .dd-confetti { animation: none !important; }
+    .dd-burst { display: none; }
+    .dd-confetti { display: none; }
+}
