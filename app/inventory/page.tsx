@@ -5,7 +5,7 @@
 // (the same form the expense drawer pops to add a missing item). Shows the Inventory Name.
 
 import React, { useEffect, useMemo, useState } from 'react';
-import { MagnifyingGlassIcon, PlusIcon, PackageIcon, LinkSimpleIcon } from '@phosphor-icons/react';
+import { MagnifyingGlassIcon, PlusIcon, PackageIcon, LinkSimpleIcon, TrendUpIcon } from '@phosphor-icons/react';
 import { Shell } from '@/lib/components/Shell';
 import { AirtableBoundary, useBase, useRecords } from '@/lib/airtable/hooks';
 import type { RecordModel, TableModel } from '@/lib/airtable/models';
@@ -15,6 +15,7 @@ import { InlineLink, InlineSelect, InlineMultiLink, ColumnHeader } from '@/lib/c
 import { InventoryForm } from '@/lib/components/InventoryForm';
 import { TABLES, INV } from '@/lib/silk/schema';
 import { usd, num, str, linkIds, selectName, nameMap, fieldChoices } from '@/lib/silk/cells';
+import { buildFlagMap } from '@/lib/silk/history';
 
 // Shared grid template for the desktop list — used by both the column header and each InvRow.
 const INV_GRID = 'minmax(120px, 1.4fr) 1.1fr 1fr 0.9fr 0.8fr 120px';
@@ -47,21 +48,26 @@ function Inventory() {
     const invTable = base.tables.find(t => t.id === TABLES.inventory)!;
     const vendorsTable = base.tables.find(t => t.id === TABLES.vendors)!;
     const locationsTable = base.tables.find(t => t.id === TABLES.locations)!;
+    const expensesTable = base.tables.find(t => t.id === TABLES.expenses)!;
     const inv = useRecords(invTable);
     const vendors = useRecords(vendorsTable);
     const locations = useRecords(locationsTable);
+    const expenses = useRecords(expensesTable); // for price-jump flags + the history report
     const vendorNames = useMemo(() => { const m = new Map<string, string>(); for (const v of vendors) m.set(v.id, v.name || ''); return m; }, [vendors]);
     const locationNames = useMemo(() => nameMap(locations), [locations]);
     // Full choice lists for the inline row editors.
     const deptChoices = useMemo(() => fieldChoices(invTable, INV.department), [invTable]);
     const typeChoices = useMemo(() => fieldChoices(invTable, INV.type), [invTable]);
+    // invId → { flagged, latestDelta }: latest purchase's unit price vs the item's listed price.
+    const flagByItem = useMemo(() => buildFlagMap(expenses, inv), [expenses, inv]);
 
     const [q, setQ] = useState('');
     const [loc, setLoc] = useState('all');
     const [dept, setDept] = useState('all');
     const [type, setType] = useState('all');
     const [vendor, setVendor] = useState('all');
-    const [sort, setSort] = useState<'item' | 'price' | 'created'>('item');
+    const [flag, setFlag] = useState('all'); // 'all' | 'flagged' | 'clear'
+    const [sort, setSort] = useState<'item' | 'price' | 'created' | 'jump'>('item');
     const [form, setForm] = useState<null | { recordId?: string }>(null);
 
     const depts = useMemo(() => uniqueSorted(inv, r => selectName(r, INV.department)), [inv]);
@@ -79,6 +85,7 @@ function Inventory() {
             .filter(r => dept === 'all' || selectName(r, INV.department) === dept)
             .filter(r => type === 'all' || selectName(r, INV.type) === type)
             .filter(r => vendor === 'all' || linkIds(r, INV.vendor).includes(vendor))
+            .filter(r => flag === 'all' || (flag === 'flagged' ? !!flagByItem.get(r.id)?.flagged : !flagByItem.get(r.id)?.flagged))
             .filter(r => {
                 if (!needle) return true;
                 const hay = [str(r, INV.name), str(r, INV.orderName), linkIds(r, INV.vendor).map(id => vendorNames.get(id) ?? '').join(' '), selectName(r, INV.type)].join(' ').toLowerCase();
@@ -87,11 +94,12 @@ function Inventory() {
         const sorted = filtered.sort((a, b) => {
             if (sort === 'price') return num(b, INV.unitPrice) - num(a, INV.unitPrice);
             if (sort === 'created') return Date.parse(b.createdTime) - Date.parse(a.createdTime);
+            if (sort === 'jump') return (flagByItem.get(b.id)?.latestDelta ?? -Infinity) - (flagByItem.get(a.id)?.latestDelta ?? -Infinity);
             const an = str(a, INV.name) || a.name || '', bn = str(b, INV.name) || b.name || '';
             return an.localeCompare(bn);
         });
         return sorted.slice(0, 400);
-    }, [inv, q, loc, dept, type, vendor, sort, vendorNames]);
+    }, [inv, q, loc, dept, type, vendor, flag, sort, vendorNames, flagByItem]);
 
     return (
         <div style={{ width: '100%', maxWidth: '1140px', margin: '0 auto', padding: `${isNarrow ? '18px' : '28px'} ${isNarrow ? '16px' : '26px'} 70px` }}>
@@ -116,9 +124,11 @@ function Inventory() {
                 <Sel block={isNarrow} value={dept} onChange={setDept} all="All departments" opts={depts.map(d => ({ value: d, label: d }))} />
                 <Sel block={isNarrow} value={type} onChange={setType} all="All types" opts={types.map(t => ({ value: t, label: t }))} />
                 <Sel block={isNarrow} value={vendor} onChange={setVendor} all="All vendors" opts={vendorOptions.map(v => ({ value: v.id, label: v.name }))} />
-                <select value={sort} onChange={e => setSort(e.target.value as 'item' | 'price' | 'created')} style={{ ...inputStyle, width: isNarrow ? '100%' : 'auto', flex: isNarrow ? '1 1 auto' : '0 0 auto' }} title="Sort by">
+                <Sel block={isNarrow} value={flag} onChange={setFlag} all="All price flags" opts={[{ value: 'flagged', label: '⚠ Price jumps only' }, { value: 'clear', label: 'No recent jump' }]} />
+                <select value={sort} onChange={e => setSort(e.target.value as 'item' | 'price' | 'created' | 'jump')} style={{ ...inputStyle, width: isNarrow ? '100%' : 'auto', flex: isNarrow ? '1 1 auto' : '0 0 auto' }} title="Sort by">
                     <option value="item">Sort: Item</option>
                     <option value="price">Sort: Unit Price</option>
+                    <option value="jump">Sort: Biggest price jump</option>
                     <option value="created">Sort: Created Date</option>
                 </select>
             </div>
@@ -135,7 +145,7 @@ function Inventory() {
                     {rows.map((r, i) => (
                         <InvRow key={r.id} rec={r} last={i === rows.length - 1} table={invTable} isNarrow={isNarrow}
                             vendors={vendors} locations={locations} vendorNames={vendorNames} locationNames={locationNames}
-                            deptChoices={deptChoices} typeChoices={typeChoices}
+                            deptChoices={deptChoices} typeChoices={typeChoices} flag={flagByItem.get(r.id)}
                             onOpen={() => setForm({ recordId: r.id })} />
                     ))}
                 </div>
@@ -160,12 +170,13 @@ function Sel({ value, onChange, all, opts, block }: { value: string; onChange: (
 // One inventory row — aligned columns like Expenses/Sales with inline-editable Tracking
 // Locations, Vendor, Department and Type (write straight to Airtable, dd-savebar while saving).
 function InvRow({
-    rec, last, table, isNarrow, vendors, locations, vendorNames, locationNames, deptChoices, typeChoices, onOpen,
+    rec, last, table, isNarrow, vendors, locations, vendorNames, locationNames, deptChoices, typeChoices, flag, onOpen,
 }: {
     rec: RecordModel; last: boolean; table: TableModel; isNarrow: boolean;
     vendors: RecordModel[]; locations: RecordModel[];
     vendorNames: Map<string, string>; locationNames: Map<string, string>;
     deptChoices: string[]; typeChoices: string[];
+    flag?: { flagged: boolean; latestDelta: number };
     onOpen: () => void;
 }) {
     const name = str(rec, INV.name) || rec.name || '(unnamed)';
@@ -193,7 +204,13 @@ function InvRow({
         </span>
     );
     const amountCell = (
-        <div style={{ textAlign: 'right', display: 'flex', flexDirection: 'column', gap: '2px' }}>
+        <div style={{ textAlign: 'right', display: 'flex', flexDirection: 'column', gap: '2px', alignItems: 'flex-end' }}>
+            {flag?.flagged && (
+                <span title={`Latest purchase is ${Math.round(flag.latestDelta * 100)}% above the listed unit price`}
+                    style={{ display: 'inline-flex', alignItems: 'center', gap: '3px', fontSize: '10.5px', fontWeight: 700, color: PALETTE.rust, background: 'rgba(181,138,58,0.16)', padding: '1px 7px', borderRadius: '999px' }}>
+                    <TrendUpIcon size={11} weight="bold" /> {Math.round(flag.latestDelta * 100)}%
+                </span>
+            )}
             <span style={{ fontFamily: DISPLAY, fontSize: '16px', color: 'var(--text-primary)' }}>{price ? usd(price) : '—'}</span>
             <span style={{ fontSize: '11.5px', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>763: {s763} · 869: {s869}</span>
         </div>

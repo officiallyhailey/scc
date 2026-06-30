@@ -1,11 +1,12 @@
 'use client';
 
 import React, { useMemo, useState } from 'react';
-import { XIcon, FloppyDiskIcon } from '@phosphor-icons/react';
+import { XIcon, FloppyDiskIcon, TrendUpIcon, CaretRightIcon } from '@phosphor-icons/react';
 import { useBase, useRecords } from '@/lib/airtable/hooks';
 import { useIsNarrow } from '@/lib/useIsNarrow';
 import { glass, Button, DISPLAY, MONO, inputStyle, MoneyInput, PALETTE } from '@/lib/components/ui';
 import { Field, PlainSelect, LinkPicker, MultiLinkPicker, iconBtn } from '@/lib/components/fields';
+import { PurchaseHistory } from '@/lib/components/PurchaseHistory';
 import { TABLES, INV } from '@/lib/silk/schema';
 import { str, numStr, linkIds, selectName, fieldChoices, nameMap, parseNum } from '@/lib/silk/cells';
 
@@ -53,6 +54,7 @@ export function InventoryForm({
     }));
     const [busy, setBusy] = useState(false);
     const [err, setErr] = useState('');
+    const [showHistory, setShowHistory] = useState(false);
     type D = typeof d;
     const set = <K extends keyof D>(k: K, v: D[K]) => { setD(p => ({ ...p, [k]: v })); };
 
@@ -90,6 +92,7 @@ export function InventoryForm({
     }
 
     return (
+      <>
         <div onClick={onClose} style={{ position: 'fixed', inset: 0, top: 'var(--nav-h)', zIndex: 1100, background: 'rgba(20,28,32,0.4)', backdropFilter: 'blur(3px)', WebkitBackdropFilter: 'blur(3px)', display: 'flex', justifyContent: 'flex-end' }}>
             <div onClick={e => e.stopPropagation()} style={{
                 width: isNarrow ? '100%' : 'min(540px, 94vw)', height: '100%', overflowY: 'auto',
@@ -104,6 +107,19 @@ export function InventoryForm({
                     </div>
                     <button onClick={onClose} aria-label="Close" style={iconBtn}><XIcon size={18} weight="bold" /></button>
                 </div>
+
+                {/* Purchase-history report (existing items only) */}
+                {existing && recordId && (
+                    <button type="button" onClick={() => setShowHistory(true)}
+                        style={{ ...glass({ soft: true }), padding: '11px 13px', display: 'flex', alignItems: 'center', gap: '10px', cursor: 'pointer', textAlign: 'left', border: '1px solid var(--glass-border)' }}>
+                        <span style={{ width: '32px', height: '32px', borderRadius: '9px', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--accent-soft)', color: 'var(--accent-deep)' }}><TrendUpIcon size={18} weight="bold" /></span>
+                        <span style={{ flex: 1, minWidth: 0 }}>
+                            <span style={{ display: 'block', fontSize: '13.5px', fontWeight: 700, color: 'var(--text-primary)' }}>Purchase history</span>
+                            <span style={{ display: 'block', fontSize: '12px', color: 'var(--text-muted)' }}>Unit price, qty & total over time — with price-jump flags</span>
+                        </span>
+                        <CaretRightIcon size={16} weight="bold" color="var(--text-muted)" />
+                    </button>
+                )}
 
                 <Field label="Item name *"><input value={d.name} onChange={e => set('name', e.target.value)} autoFocus style={inputStyle} placeholder="e.g. Oat Milk — Half Gallon" /></Field>
 
@@ -152,6 +168,8 @@ export function InventoryForm({
                 </div>
             </div>
         </div>
+        {showHistory && recordId && <PurchaseHistory recordId={recordId} onClose={() => setShowHistory(false)} />}
+      </>
     );
 }
 
