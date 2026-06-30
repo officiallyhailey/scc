@@ -10,6 +10,7 @@ export const TABLES = {
     report: 'tblc9ob9qJpkcgH3t',
     sales: 'tbl683TIbiGLbe0AE',
     products: 'tblaGTV9SpX0AFs7P',
+    salesCategories: 'tbl9ILdL3paGQrJUC', // link target of PRODUCT.salesCategory
     timeSheets: 'tblDnO3dyILyYHKGH',
 } as const;
 
@@ -41,8 +42,20 @@ export const SALE = {
     salesCategory: 'fld8zDPu8d75JW7sV', // lookup (read-only)
 } as const;
 
-// Products: primary "Sales Name" (formula) used as the link display.
-export const PRODUCT = { salesName: 'fld1Csegcy7QmeQoS', name: 'fldZNixKH7AdCmgo9' } as const;
+// Products (tblaGTV9SpX0AFs7P). Primary "Sales Name" (formula) is the link display.
+export const PRODUCT = {
+    salesName: 'fld1Csegcy7QmeQoS',     // formula: Name + " " + Variation (read-only, link display)
+    name: 'fldZNixKH7AdCmgo9',          // singleLineText
+    variation: 'fldZ9hLJopE2JeBl5',     // singleLineText
+    price: 'fldebm5Db3mKKUKOj',         // currency
+    salesCategory: 'fldgl4Vgd9rkHC9QB', // link → Sales Categories (drives Department/Category lookups)
+    locations: 'fldn4GjAykATJ5OMW',     // link → Locations
+} as const;
+
+// Sales Categories table (tbl9ILdL3paGQrJUC). Each record has a Type single-select
+// (Bar/Kitchen/Retail Coffee/…); many records share a Type, so the product picker maps
+// each distinct Type to one representative record (the Department lookup only reads Type).
+export const SALES_CATEGORY = { type: 'fld5fGNjSHriHiOJV' } as const;
 
 // Sales "Department" lookup → tracked scorecard department (Bar folds in Retail Coffee).
 export function salesTrackedDept(dept: string): 'Bar' | 'Kitchen' | null {

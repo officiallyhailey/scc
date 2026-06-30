@@ -8,12 +8,13 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { MagnifyingGlassIcon, PlusIcon, PackageIcon, LinkSimpleIcon } from '@phosphor-icons/react';
 import { Shell } from '@/lib/components/Shell';
 import { AirtableBoundary, useBase, useRecords } from '@/lib/airtable/hooks';
-import type { RecordModel } from '@/lib/airtable/models';
+import type { RecordModel, TableModel } from '@/lib/airtable/models';
 import { useIsNarrow } from '@/lib/useIsNarrow';
-import { glass, Pill, Button, DISPLAY, MONO, inputStyle, PALETTE } from '@/lib/components/ui';
+import { glass, Button, DISPLAY, MONO, inputStyle, PALETTE } from '@/lib/components/ui';
+import { InlineLink, InlineSelect, InlineMultiLink } from '@/lib/components/fields';
 import { InventoryForm } from '@/lib/components/InventoryForm';
 import { TABLES, INV } from '@/lib/silk/schema';
-import { usd, num, str, linkIds, selectName } from '@/lib/silk/cells';
+import { usd, num, str, linkIds, selectName, nameMap, fieldChoices } from '@/lib/silk/cells';
 
 function uniqueSorted(records: RecordModel[], pick: (r: RecordModel) => string): string[] {
     const s = new Set<string>();
@@ -47,6 +48,10 @@ function Inventory() {
     const vendors = useRecords(vendorsTable);
     const locations = useRecords(locationsTable);
     const vendorNames = useMemo(() => { const m = new Map<string, string>(); for (const v of vendors) m.set(v.id, v.name || ''); return m; }, [vendors]);
+    const locationNames = useMemo(() => nameMap(locations), [locations]);
+    // Full choice lists for the inline row editors.
+    const deptChoices = useMemo(() => fieldChoices(invTable, INV.department), [invTable]);
+    const typeChoices = useMemo(() => fieldChoices(invTable, INV.type), [invTable]);
 
     const [q, setQ] = useState('');
     const [loc, setLoc] = useState('all');
@@ -86,7 +91,7 @@ function Inventory() {
     }, [inv, q, loc, dept, type, vendor, sort, vendorNames]);
 
     return (
-        <div style={{ width: '100%', maxWidth: '1040px', margin: '0 auto', padding: `${isNarrow ? '18px' : '28px'} ${isNarrow ? '14px' : '26px'} 70px` }}>
+        <div style={{ width: '100%', maxWidth: '1140px', margin: '0 auto', padding: `${isNarrow ? '18px' : '28px'} ${isNarrow ? '16px' : '26px'} 70px` }}>
             <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', flexWrap: 'wrap', gap: '12px', marginBottom: '16px' }}>
                 <div>
                     <div style={{ fontFamily: MONO, fontSize: '11px', fontWeight: 700, letterSpacing: '0.14em', textTransform: 'uppercase', color: 'var(--text-muted)' }}>// Inventory</div>
@@ -120,36 +125,12 @@ function Inventory() {
                 </div>
             ) : (
                 <div style={{ ...glass(), padding: '4px', display: 'flex', flexDirection: 'column' }}>
-                    {rows.map((r, i) => {
-                        const vendor = linkIds(r, INV.vendor).map(id => vendorNames.get(id)).filter(Boolean).join(', ');
-                        const dep = selectName(r, INV.department);
-                        const type = selectName(r, INV.type);
-                        const price = num(r, INV.unitPrice);
-                        const s763 = num(r, INV.stock763), s869 = num(r, INV.stock869);
-                        const url = str(r, INV.url);
-                        return (
-                            <div key={r.id} onClick={() => setForm({ recordId: r.id })}
-                                onMouseEnter={e => { e.currentTarget.style.background = 'var(--glass-bg-soft)'; }}
-                                onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}
-                                style={{ display: 'flex', alignItems: 'center', gap: '14px', padding: '12px 14px', borderRadius: 'var(--radius-sm)', cursor: 'pointer', borderBottom: i === rows.length - 1 ? 'none' : '1px solid var(--hairline)' }}>
-                                <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: '5px' }}>
-                                    <span style={{ display: 'flex', alignItems: 'center', gap: '7px', fontWeight: 700, fontSize: '14px', color: 'var(--text-primary)' }}>
-                                        {str(r, INV.name) || r.name || '(unnamed)'}
-                                        {url && <LinkSimpleIcon size={13} color={PALETTE.mist} />}
-                                    </span>
-                                    <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', alignItems: 'center' }}>
-                                        {dep && <Pill text={dep} tone="olive" />}
-                                        {type && <Pill text={type} tone="mist" />}
-                                        {vendor && <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>{vendor}</span>}
-                                    </div>
-                                </div>
-                                <div style={{ flexShrink: 0, textAlign: 'right', display: 'flex', flexDirection: 'column', gap: '2px' }}>
-                                    <span style={{ fontFamily: DISPLAY, fontSize: '16px', color: 'var(--text-primary)' }}>{price ? usd(price) : '—'}</span>
-                                    <span style={{ fontSize: '11.5px', color: 'var(--text-muted)' }}>763: {s763} · 869: {s869}</span>
-                                </div>
-                            </div>
-                        );
-                    })}
+                    {rows.map((r, i) => (
+                        <InvRow key={r.id} rec={r} last={i === rows.length - 1} table={invTable} isNarrow={isNarrow}
+                            vendors={vendors} locations={locations} vendorNames={vendorNames} locationNames={locationNames}
+                            deptChoices={deptChoices} typeChoices={typeChoices}
+                            onOpen={() => setForm({ recordId: r.id })} />
+                    ))}
                 </div>
             )}
 
@@ -166,5 +147,90 @@ function Sel({ value, onChange, all, opts }: { value: string; onChange: (v: stri
             <option value="all">{all}</option>
             {opts.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
         </select>
+    );
+}
+
+// One inventory row — aligned columns like Expenses/Sales with inline-editable Tracking
+// Locations, Vendor, Department and Type (write straight to Airtable, dd-savebar while saving).
+function InvRow({
+    rec, last, table, isNarrow, vendors, locations, vendorNames, locationNames, deptChoices, typeChoices, onOpen,
+}: {
+    rec: RecordModel; last: boolean; table: TableModel; isNarrow: boolean;
+    vendors: RecordModel[]; locations: RecordModel[];
+    vendorNames: Map<string, string>; locationNames: Map<string, string>;
+    deptChoices: string[]; typeChoices: string[];
+    onOpen: () => void;
+}) {
+    const name = str(rec, INV.name) || rec.name || '(unnamed)';
+    const url = str(rec, INV.url);
+    const price = num(rec, INV.unitPrice);
+    const s763 = num(rec, INV.stock763), s869 = num(rec, INV.stock869);
+
+    const [openCount, setOpenCount] = useState(0);
+    const [savingField, setSavingField] = useState<string | null>(null);
+    const onToggle = (o: boolean) => setOpenCount(c => Math.max(0, c + (o ? 1 : -1)));
+    async function update(field: string, fields: Record<string, unknown>) {
+        setSavingField(field);
+        try { await table.updateRecordAsync(rec, fields); } catch { /* SWR keeps the old value */ } finally { setSavingField(null); }
+    }
+
+    const fill = !isNarrow;
+    const locEd = <InlineMultiLink value={linkIds(rec, INV.trackingLocations)} names={locationNames} options={locations} placeholder="Locations" fill={fill} saving={savingField === 'loc'} onToggle={onToggle} onChange={v => update('loc', { [INV.trackingLocations]: v })} />;
+    const venEd = <InlineLink value={linkIds(rec, INV.vendor)} names={vendorNames} options={vendors} placeholder="Vendor" fill={fill} saving={savingField === 'vendor'} onToggle={onToggle} onChange={v => update('vendor', { [INV.vendor]: v })} />;
+    const depEd = <InlineSelect value={selectName(rec, INV.department)} options={deptChoices} placeholder="Department" fill={fill} saving={savingField === 'dept'} onToggle={onToggle} onChange={v => update('dept', { [INV.department]: v || null })} />;
+    const typeEd = <InlineSelect value={selectName(rec, INV.type)} options={typeChoices} placeholder="Type" fill={fill} saving={savingField === 'type'} onToggle={onToggle} onChange={v => update('type', { [INV.type]: v || null })} />;
+    const itemCell = (
+        <span title={name} style={{ display: 'flex', alignItems: 'center', gap: '7px', fontWeight: 700, fontSize: '14px', color: 'var(--text-primary)', overflow: 'hidden' }}>
+            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{name}</span>
+            {url && <LinkSimpleIcon size={13} color={PALETTE.mist} style={{ flexShrink: 0 }} />}
+        </span>
+    );
+    const amountCell = (
+        <div style={{ textAlign: 'right', display: 'flex', flexDirection: 'column', gap: '2px' }}>
+            <span style={{ fontFamily: DISPLAY, fontSize: '16px', color: 'var(--text-primary)' }}>{price ? usd(price) : '—'}</span>
+            <span style={{ fontSize: '11.5px', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>763: {s763} · 869: {s869}</span>
+        </div>
+    );
+    const shared = {
+        onClick: onOpen,
+        onMouseEnter: (e: React.MouseEvent<HTMLDivElement>) => { e.currentTarget.style.background = 'var(--glass-bg-soft)'; },
+        onMouseLeave: (e: React.MouseEvent<HTMLDivElement>) => { e.currentTarget.style.background = 'transparent'; },
+    };
+
+    // Wide: one aligned grid row — Item | Tracking Locations | Vendor | Department | Type | Price.
+    if (!isNarrow) {
+        return (
+            <div {...shared}
+                style={{
+                    display: 'grid', gridTemplateColumns: 'minmax(120px, 1.4fr) 1.1fr 1fr 0.9fr 0.8fr 120px',
+                    alignItems: 'center', gap: '10px', padding: '8px 14px',
+                    borderRadius: 'var(--radius-sm)', cursor: 'pointer',
+                    position: 'relative', zIndex: openCount > 0 ? 5 : 'auto',
+                    borderBottom: last ? 'none' : '1px solid var(--hairline)',
+                }}>
+                <div style={{ minWidth: 0 }}>{itemCell}</div>
+                {locEd}{venEd}{depEd}{typeEd}
+                {amountCell}
+            </div>
+        );
+    }
+
+    // Narrow: item line, then the editable fields wrap below, price on the right.
+    return (
+        <div {...shared}
+            style={{
+                display: 'flex', alignItems: 'center', gap: '12px', padding: '9px 14px',
+                borderRadius: 'var(--radius-sm)', cursor: 'pointer',
+                position: 'relative', zIndex: openCount > 0 ? 5 : 'auto',
+                borderBottom: last ? 'none' : '1px solid var(--hairline)',
+            }}>
+            <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                {itemCell}
+                <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', alignItems: 'center' }}>
+                    {locEd}{venEd}{depEd}{typeEd}
+                </div>
+            </div>
+            <div style={{ flexShrink: 0, minWidth: '92px' }}>{amountCell}</div>
+        </div>
     );
 }

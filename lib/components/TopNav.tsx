@@ -5,7 +5,7 @@ import { createPortal } from 'react-dom';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import {
-    ListIcon, XIcon, HouseIcon, CoffeeIcon, QuestionIcon,
+    ListIcon, XIcon, HouseIcon, QuestionIcon,
     UploadSimpleIcon, ReceiptIcon, PackageIcon, ChartLineUpIcon, ChartBarIcon,
 } from '@phosphor-icons/react';
 import { useIsNarrow } from '@/lib/useIsNarrow';
@@ -21,8 +21,6 @@ const LINKS = [
     { href: '/sales', label: 'Sales', Icon: ChartLineUpIcon },
     { href: '/scorecard', label: 'Scorecard', Icon: ChartBarIcon },
 ];
-
-const DISPLAY = 'var(--font-display)';
 
 function isActive(pathname: string, href: string): boolean {
     return href === '/' ? pathname === '/' : pathname.startsWith(href);
@@ -55,14 +53,9 @@ export function TopNav() {
     });
 
     const logo = (
-        <Link href="/" style={{ display: 'inline-flex', alignItems: 'center', gap: '10px', textDecoration: 'none' }}>
-            <span style={{
-                width: '30px', height: '30px', borderRadius: '9px',
-                background: 'linear-gradient(135deg, var(--accent), var(--c-slate))',
-                display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#f6bd95', flexShrink: 0,
-                boxShadow: 'var(--shadow-sm)',
-            }}><CoffeeIcon size={17} weight="fill" /></span>
-            <span style={{ fontFamily: DISPLAY, fontSize: '21px', letterSpacing: '0.03em', color: 'var(--text-primary)', textTransform: 'uppercase' }}>Silk Finance</span>
+        <Link href="/" aria-label="Silk City Coffee" style={{ display: 'inline-flex', alignItems: 'center', textDecoration: 'none' }}>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src="/logo.png" alt="Silk City Coffee" style={{ height: '40px', width: 'auto', objectFit: 'contain', display: 'block' }} />
         </Link>
     );
 

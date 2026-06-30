@@ -8,18 +8,54 @@
 
 import React, { useEffect, useMemo, useState } from 'react';
 import {
-    MagnifyingGlassIcon, XIcon, ReceiptIcon, FloppyDiskIcon, CheckCircleIcon,
-    PaperclipIcon, PlusIcon, PackageIcon, TrashIcon, WarningIcon,
+    MagnifyingGlassIcon, XIcon, ReceiptIcon, FloppyDiskIcon, CheckCircleIcon, CircleIcon,
+    PaperclipIcon, PlusIcon, TrashIcon, WarningIcon,
 } from '@phosphor-icons/react';
 import { Shell } from '@/lib/components/Shell';
 import { AirtableBoundary, useBase, useRecords } from '@/lib/airtable/hooks';
 import type { RecordModel, TableModel } from '@/lib/airtable/models';
 import { useIsNarrow } from '@/lib/useIsNarrow';
 import { glass, Pill, Button, DISPLAY, MONO, inputStyle, MoneyInput, PALETTE } from '@/lib/components/ui';
-import { Field, PlainSelect, MultiSelectDropdown, AutoTextarea, LinkPicker, iconBtn } from '@/lib/components/fields';
+import { Field, PlainSelect, MultiSelectDropdown, MultiFilter, AutoTextarea, LinkPicker, InlineLink, InlineMulti, iconBtn } from '@/lib/components/fields';
 import { InventoryForm } from '@/lib/components/InventoryForm';
-import { TABLES, EX, INV } from '@/lib/silk/schema';
+import { TABLES, EX, INV, SALE } from '@/lib/silk/schema';
 import { usd, num, str, numStr, linkIds, selectNames, fieldChoices, nameMap, weekKey, parseNum } from '@/lib/silk/cells';
+
+// The vendors whose invoices are expected every week. `match` is a lowercase substring
+// tested against each expense's linked vendor name(s) — loose so "Royal Tea New York",
+// "Adagio Teas", etc. still match. Used by the weekly upload-status summary bar.
+const KEY_VENDORS: { label: string; match: string }[] = [
+    { label: 'Silk City Coffee', match: 'silk' },
+    { label: 'Amazon', match: 'amazon' },
+    { label: 'Sysco', match: 'sysco' },
+    { label: 'Webstaurant', match: 'webstaurant' },
+    { label: 'Adagio Tea', match: 'adagio' },
+    { label: 'RoyalNY', match: 'royal' },
+    { label: 'Imperial Dade', match: 'imperial' },
+    { label: 'Barista Underground', match: 'barista' },
+];
+
+// A field's filter passes when nothing is selected (= all) or the row matches at least
+// one selected token; the '__none__' token matches rows where the field is blank.
+function matchMulti(selected: string[], rowVals: string[]): boolean {
+    if (selected.length === 0) return true;
+    return selected.some(s => (s === '__none__' ? rowVals.length === 0 : rowVals.includes(s)));
+}
+
+// Category → bar/swatch colour for the weekly breakdown (Bar gold, Kitchen slate; others pooled).
+const CAT_FIXED: Record<string, string> = { Bar: 'var(--accent)', Kitchen: 'var(--c-slate)', Uncategorized: 'var(--accent-2)' };
+const CAT_POOL = ['#8a979c', '#9a7d27', '#5c6539', '#6b8a8f', '#b58a3a', '#7a6a9c', '#3f7d6b', '#a4684b'];
+const fmtPct = (r: number) => `${Math.round(r * 100)}%`; // whole percent, matching the scorecard
+// COG heat, matching the scorecard: amber when high, gold mid, ink when healthy.
+const cogColor = (v: number) => (v >= 0.45 ? PALETTE.rust : v >= 0.30 ? 'var(--accent-deep)' : 'var(--text-primary)');
+
+// Scorecard COG sections: expense Category set ÷ Sales Department set, per location.
+// 763 splits Bar/Kitchen; 869 is one combined Cafe. (Mirrors app/scorecard/page.tsx.)
+const COG_SECTIONS: { key: string; label: string; locName: string; expCats: Set<string>; salDepts: Set<string> }[] = [
+    { key: 'Bar', label: 'Bar · 763', locName: '763', expCats: new Set(['Bar']), salDepts: new Set(['Bar', 'Retail Coffee']) },
+    { key: 'Kitchen', label: 'Kitchen · 763', locName: '763', expCats: new Set(['Kitchen']), salDepts: new Set(['Kitchen']) },
+    { key: 'Cafe', label: 'Cafe · 869', locName: '869', expCats: new Set(['Bar', 'Kitchen']), salDepts: new Set(['Bar', 'Retail Coffee', 'Kitchen']) },
+];
 
 export default function ExpensesPage() {
     const [mounted, setMounted] = useState(false);
@@ -44,11 +80,13 @@ function Expenses() {
     const vendorsTable = base.tables.find(t => t.id === TABLES.vendors)!;
     const locationsTable = base.tables.find(t => t.id === TABLES.locations)!;
     const inventoryTable = base.tables.find(t => t.id === TABLES.inventory)!;
+    const salesTable = base.tables.find(t => t.id === TABLES.sales)!;
 
     const expenses = useRecords(expensesTable);
     const vendors = useRecords(vendorsTable);
     const locations = useRecords(locationsTable);
     const inventory = useRecords(inventoryTable);
+    const salesRecords = useRecords(salesTable); // for the weekly COG % (expenses ÷ sales)
 
     const vendorNames = useMemo(() => nameMap(vendors), [vendors]);
     const locationNames = useMemo(() => nameMap(locations), [locations]);
@@ -59,11 +97,14 @@ function Expenses() {
         return m;
     }, [inventory]);
 
-    const [week, setWeek] = useState('all');
-    const [vendor, setVendor] = useState('all');
-    const [loc, setLoc] = useState('all');
-    const [dept, setDept] = useState('all');
-    const [invFilter, setInvFilter] = useState('all'); // 'all' | '__none__' | inventory record id
+    // Multi-select filters: each holds selected tokens (record ids / choice names / week
+    // strings, or '__none__' for blank). Empty array = no filter on that field.
+    const [week, setWeek] = useState<string[]>([]);
+    const [vendor, setVendor] = useState<string[]>([]);
+    const [loc, setLoc] = useState<string[]>([]);
+    const [dept, setDept] = useState<string[]>([]);
+    const [invFilter, setInvFilter] = useState<string[]>([]);
+    const [bank, setBank] = useState<string[]>([]);
     const [q, setQ] = useState('');
     const [openId, setOpenId] = useState<string | null>(null);
     const [creating, setCreating] = useState(false);
@@ -89,6 +130,21 @@ function Expenses() {
         return fieldChoices(expensesTable, EX.category).filter(c => present.has(c));
     }, [expenses, expensesTable]);
 
+    const bankOptions = useMemo(() => {
+        const present = new Set<string>();
+        for (const r of expenses) for (const b of selectNames(r, EX.bank)) present.add(b);
+        return fieldChoices(expensesTable, EX.bank).filter(b => present.has(b));
+    }, [expenses, expensesTable]);
+
+    // Full category choice list for the inline row editor.
+    const catChoices = useMemo(() => fieldChoices(expensesTable, EX.category), [expensesTable]);
+
+    // Create a Vendor on the fly (a vendor is just a name) and return its id to link.
+    const createVendor = async (name: string): Promise<string | null> => {
+        try { return await vendorsTable.createRecordAsync({ [vendorsTable.primaryFieldId]: name.trim() }); }
+        catch { return null; }
+    };
+
     // Inventory items actually linked to some expense, labeled by Inventory Name.
     const inventoryOptions = useMemo(() => {
         const ids = new Set<string>();
@@ -101,15 +157,12 @@ function Expenses() {
     const rows = useMemo(() => {
         const needle = q.trim().toLowerCase();
         return expenses
-            .filter(r => week === 'all' || (week === '__none__' ? !str(r, EX.weekOf) : str(r, EX.weekOf) === week))
-            .filter(r => vendor === 'all' || (vendor === '__none__' ? linkIds(r, EX.vendors).length === 0 : linkIds(r, EX.vendors).includes(vendor)))
-            .filter(r => loc === 'all' || (loc === '__none__' ? linkIds(r, EX.locations).length === 0 : linkIds(r, EX.locations).includes(loc)))
-            .filter(r => dept === 'all' || (dept === '__none__' ? selectNames(r, EX.category).length === 0 : selectNames(r, EX.category).includes(dept)))
-            .filter(r => {
-                if (invFilter === 'all') return true;
-                const ids = linkIds(r, EX.inventory);
-                return invFilter === '__none__' ? ids.length === 0 : ids.includes(invFilter);
-            })
+            .filter(r => matchMulti(week, str(r, EX.weekOf) ? [str(r, EX.weekOf)] : []))
+            .filter(r => matchMulti(vendor, linkIds(r, EX.vendors)))
+            .filter(r => matchMulti(loc, linkIds(r, EX.locations)))
+            .filter(r => matchMulti(dept, selectNames(r, EX.category)))
+            .filter(r => matchMulti(invFilter, linkIds(r, EX.inventory)))
+            .filter(r => matchMulti(bank, selectNames(r, EX.bank)))
             .filter(r => {
                 if (!needle) return true;
                 const hay = [
@@ -120,9 +173,97 @@ function Expenses() {
                 return hay.includes(needle);
             })
             .sort((a, b) => weekKey(str(b, EX.weekOf)).localeCompare(weekKey(str(a, EX.weekOf))) || str(b, EX.date).localeCompare(str(a, EX.date)));
-    }, [expenses, week, vendor, loc, dept, invFilter, q, vendorNames]);
+    }, [expenses, week, vendor, loc, dept, invFilter, bank, q, vendorNames]);
 
     const total = useMemo(() => rows.reduce((s, r) => s + num(r, EX.total), 0), [rows]);
+
+    // Weekly upload-status: which key vendors have ≥1 invoice in the selected week(s).
+    // Only shown when at least one real week is selected (the report is run per week).
+    const weekStatus = useMemo(() => {
+        const selWeeks = week.filter(w => w !== '__none__');
+        if (selWeeks.length === 0) return null;
+        const weekSet = new Set(selWeeks);
+        const present = new Set<string>(); // lowercased vendor names seen in those weeks
+        for (const r of expenses) {
+            if (!weekSet.has(str(r, EX.weekOf))) continue;
+            for (const id of linkIds(r, EX.vendors)) {
+                const n = (vendorNames.get(id) ?? '').toLowerCase();
+                if (n) present.add(n);
+            }
+        }
+        const names = [...present];
+        const vendors = KEY_VENDORS.map(kv => ({ ...kv, done: names.some(n => n.includes(kv.match)) }));
+        return { weeks: selWeeks, vendors, done: vendors.filter(v => v.done).length };
+    }, [expenses, week, vendorNames]);
+
+    // Stable category → colour map (consistent colour per category across week cards).
+    const catColor = useMemo(() => {
+        const m = new Map<string, string>();
+        let pi = 0;
+        for (const c of [...deptOptions, 'Uncategorized']) m.set(c, CAT_FIXED[c] ?? CAT_POOL[pi++ % CAT_POOL.length]);
+        return (name: string) => m.get(name) ?? '#9aa3a6';
+    }, [deptOptions]);
+
+    // Per-week summary: a filter-synced expenses-by-category bar PLUS scorecard COG %.
+    // The bar respects every expense filter (not the search). The COG follows the scorecard's
+    // department mapping (Bar exp ÷ Bar+Retail-Coffee sales, etc.) and is NOT affected by the
+    // vendor/category/inventory/bank filters — only the Location filter selects which sections
+    // appear (763 → Bar+Kitchen, 869 → Cafe). One card per selected week so weeks can compare.
+    const weekBreakdowns = useMemo(() => {
+        const selWeeks = week.filter(w => w !== '__none__');
+        if (selWeeks.length === 0) return null;
+
+        // Resolve the active COG sections (by location name → id, respecting the Location filter).
+        const realLoc = loc.filter(x => x !== '__none__');
+        const sections = COG_SECTIONS
+            .map(s => ({ ...s, locId: locations.find(l => (l.name || '').trim() === s.locName)?.id }))
+            .filter(s => s.locId && (realLoc.length === 0 || realLoc.includes(s.locId)));
+
+        const cards = selWeeks.map(wk => {
+            // filter-synced expense composition (the bar)
+            const inWeek = expenses.filter(r =>
+                str(r, EX.weekOf) === wk
+                && matchMulti(vendor, linkIds(r, EX.vendors))
+                && matchMulti(loc, linkIds(r, EX.locations))
+                && matchMulti(dept, selectNames(r, EX.category))
+                && matchMulti(invFilter, linkIds(r, EX.inventory))
+                && matchMulti(bank, selectNames(r, EX.bank)),
+            );
+            const total = inWeek.reduce((s, r) => s + num(r, EX.total), 0);
+            const byCat = new Map<string, number>();
+            for (const r of inWeek) {
+                const cat = selectNames(r, EX.category)[0] || 'Uncategorized';
+                byCat.set(cat, (byCat.get(cat) ?? 0) + num(r, EX.total));
+            }
+            const cats = [...byCat.entries()]
+                .map(([name, amount]) => ({ name, amount, pct: total > 0 ? amount / total : 0 }))
+                .sort((a, b) => b.amount - a.amount);
+
+            // scorecard COG per section for this week
+            const cogs = sections.map(sec => {
+                let exp = 0, sal = 0;
+                for (const r of expenses) {
+                    if (str(r, EX.weekOf) !== wk || !linkIds(r, EX.locations).includes(sec.locId!)) continue;
+                    if (selectNames(r, EX.category).some(c => sec.expCats.has(c))) exp += num(r, EX.total);
+                }
+                for (const r of salesRecords) {
+                    if (str(r, SALE.weekStart) !== wk || !linkIds(r, SALE.locations).includes(sec.locId!)) continue;
+                    if (selectNames(r, SALE.department).some(dn => sec.salDepts.has(dn))) sal += num(r, SALE.netSales);
+                }
+                return { key: sec.key, label: sec.label, exp, sal, cog: sal > 0 ? exp / sal : null };
+            });
+            return { week: wk, total, cats, cogs };
+        }).sort((a, b) => weekKey(b.week).localeCompare(weekKey(a.week)));
+
+        // Blended average COG per section across the selected weeks (Σ exp ÷ Σ sales, weeks with sales).
+        const avg = sections.map(sec => {
+            let e = 0, s = 0;
+            for (const c of cards) { const x = c.cogs.find(g => g.key === sec.key); if (x && x.sal > 0) { e += x.exp; s += x.sal; } }
+            return { key: sec.key, label: sec.label, cog: s > 0 ? e / s : null };
+        });
+        return { cards, sections, avg };
+    }, [expenses, salesRecords, locations, week, vendor, loc, dept, invFilter, bank]);
+
     const openRec = openId ? expenses.find(r => r.id === openId) ?? null : null;
     const pad = isNarrow ? '16px' : '26px';
 
@@ -143,19 +284,107 @@ function Expenses() {
                 </div>
             </div>
 
-            {/* Filters: search + Week / Vendor / Location / Department */}
-            <div style={{ ...glass(), padding: '10px', display: 'flex', gap: '10px', flexWrap: 'wrap', alignItems: 'center', marginBottom: '14px' }}>
+            {/* Filters (all multi-select): search + Week / Vendor / Location / Department / Inventory / Bank.
+                position+zIndex lift the bar above the summary/list so the open dropdowns aren't covered
+                (those siblings each create a stacking context via backdrop-filter). */}
+            <div style={{ ...glass(), position: 'relative', zIndex: 40, padding: '10px', display: 'flex', gap: '10px', flexWrap: 'wrap', alignItems: 'center', marginBottom: '14px' }}>
                 <div style={{ position: 'relative', flex: '1 1 200px', minWidth: '160px' }}>
                     <MagnifyingGlassIcon size={16} weight="bold" style={{ position: 'absolute', left: '11px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
                     <input value={q} onChange={e => setQ(e.target.value)} placeholder="Search…" style={{ ...inputStyle, paddingLeft: '34px' }} />
                 </div>
-                <FilterSelect value={week} onChange={setWeek} allLabel="All weeks" options={[{ value: '__none__', label: '— No week —' }, ...weeks.map(w => ({ value: w, label: w }))]} />
-                <FilterSelect value={vendor} onChange={setVendor} allLabel="All vendors" options={[{ value: '__none__', label: '— No vendor —' }, ...vendorOptions.map(v => ({ value: v.id, label: v.name }))]} />
-                <FilterSelect value={loc} onChange={setLoc} allLabel="All locations" options={[{ value: '__none__', label: '— No location —' }, ...locations.map(l => ({ value: l.id, label: l.name || '(loc)' }))]} />
-                <FilterSelect value={dept} onChange={setDept} allLabel="All departments" options={[{ value: '__none__', label: '— No category —' }, ...deptOptions.map(d => ({ value: d, label: d }))]} />
-                <FilterSelect value={invFilter} onChange={setInvFilter} allLabel="All inventory items"
-                    options={[{ value: '__none__', label: '— No inventory item —' }, ...inventoryOptions.map(o => ({ value: o.id, label: o.name }))]} />
+                <MultiFilter value={week} onChange={setWeek} allLabel="All weeks" options={[{ value: '__none__', label: '— No week —' }, ...weeks.map(w => ({ value: w, label: w }))]} />
+                <MultiFilter value={vendor} onChange={setVendor} allLabel="All vendors" searchable options={[{ value: '__none__', label: '— No vendor —' }, ...vendorOptions.map(v => ({ value: v.id, label: v.name }))]} />
+                <MultiFilter value={loc} onChange={setLoc} allLabel="All locations" options={[{ value: '__none__', label: '— No location —' }, ...locations.map(l => ({ value: l.id, label: l.name || '(loc)' }))]} />
+                <MultiFilter value={dept} onChange={setDept} allLabel="All departments" options={[{ value: '__none__', label: '— No category —' }, ...deptOptions.map(d => ({ value: d, label: d }))]} />
+                <MultiFilter value={invFilter} onChange={setInvFilter} allLabel="All inventory" searchable options={[{ value: '__none__', label: '— No inventory item —' }, ...inventoryOptions.map(o => ({ value: o.id, label: o.name }))]} />
+                <MultiFilter value={bank} onChange={setBank} allLabel="All banks" options={[{ value: '__none__', label: '— No bank —' }, ...bankOptions.map(b => ({ value: b, label: b }))]} />
             </div>
+
+            {/* Weekly upload-status summary — appears once a week is selected */}
+            {weekStatus && (
+                <div style={{ ...glass(), padding: '13px 14px', marginBottom: '14px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px', flexWrap: 'wrap', marginBottom: '10px' }}>
+                        <span style={{ fontFamily: MONO, fontSize: '11px', fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--text-muted)' }}>
+                            Key invoices · week{weekStatus.weeks.length > 1 ? 's' : ''} of {weekStatus.weeks.join(', ')}
+                        </span>
+                        <span style={{ fontFamily: MONO, fontSize: '12px', fontWeight: 700, color: weekStatus.done === KEY_VENDORS.length ? 'var(--accent-deep)' : PALETTE.rust }}>
+                            {weekStatus.done} / {KEY_VENDORS.length} uploaded
+                        </span>
+                    </div>
+                    <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                        {weekStatus.vendors.map(v => (
+                            <span key={v.label} title={v.done ? 'Uploaded' : 'Not yet uploaded'}
+                                style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', padding: '6px 11px', borderRadius: '999px', fontSize: '13px', fontWeight: 700,
+                                    background: v.done ? 'var(--accent-soft)' : 'var(--glass-bg)', border: `1px solid ${v.done ? 'transparent' : 'var(--glass-border)'}`,
+                                    color: v.done ? 'var(--accent-deep)' : 'var(--text-muted)' }}>
+                                {v.done
+                                    ? <CheckCircleIcon size={16} weight="fill" color="var(--accent-deep)" />
+                                    : <CircleIcon size={16} weight="bold" color={PALETTE.rust} />}
+                                {v.label}
+                            </span>
+                        ))}
+                    </div>
+                </div>
+            )}
+
+            {/* Weekly expenses-by-department + scorecard COG % — one card per selected week */}
+            {weekBreakdowns && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginBottom: '14px' }}>
+                    {/* Blended average COG % per section across the selected weeks */}
+                    {weekBreakdowns.cards.length > 1 && weekBreakdowns.sections.length > 0 && (
+                        <div style={{ ...glass({ soft: true }), padding: '10px 14px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap' }}>
+                            <span style={{ fontFamily: MONO, fontSize: '11px', fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--text-muted)' }}>
+                                Average COG % · {weekBreakdowns.cards.length} weeks
+                            </span>
+                            <span style={{ display: 'inline-flex', alignItems: 'baseline', gap: '16px', flexWrap: 'wrap' }}>
+                                {weekBreakdowns.avg.map(a => (
+                                    <span key={a.key} style={{ display: 'inline-flex', alignItems: 'baseline', gap: '6px' }}>
+                                        <span style={{ fontSize: '12px', fontWeight: 700, color: 'var(--text-muted)' }}>{a.label}</span>
+                                        <span style={{ fontFamily: DISPLAY, fontSize: '18px', color: a.cog == null ? 'var(--text-muted)' : cogColor(a.cog) }}>{a.cog == null ? '—' : fmtPct(a.cog)}</span>
+                                    </span>
+                                ))}
+                            </span>
+                        </div>
+                    )}
+                    {weekBreakdowns.cards.map(wb => (
+                        <div key={wb.week} style={{ ...glass(), padding: '13px 15px' }}>
+                            <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: '10px', marginBottom: '10px', flexWrap: 'wrap' }}>
+                                <span style={{ fontFamily: MONO, fontSize: '11px', fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--text-muted)' }}>Expenses by department · week of {wb.week}</span>
+                                <span style={{ fontFamily: DISPLAY, fontSize: '20px', color: 'var(--text-primary)' }}>{usd(wb.total)}</span>
+                            </div>
+                            {/* stacked 100% bar (expense $ by category) */}
+                            <div style={{ display: 'flex', height: '14px', borderRadius: '7px', overflow: 'hidden', background: 'rgba(50,70,79,0.10)' }}>
+                                {wb.cats.map(c => (
+                                    <div key={c.name} title={`${c.name} · ${usd(c.amount)} · ${Math.round(c.pct * 100)}%`}
+                                        style={{ width: `${Math.max(0, c.pct * 100)}%`, background: catColor(c.name), transition: 'width .3s ease' }} />
+                                ))}
+                            </div>
+                            {/* legend */}
+                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '12px', marginTop: '10px' }}>
+                                {wb.cats.map(c => (
+                                    <span key={c.name} style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', fontSize: '12.5px', color: 'var(--text-primary)' }}>
+                                        <span style={{ width: '10px', height: '10px', borderRadius: '3px', background: catColor(c.name), flexShrink: 0 }} />
+                                        <span style={{ fontWeight: 700 }}>{c.name}</span>
+                                        <span style={{ color: 'var(--text-muted)' }}>{usd(c.amount)} · {Math.round(c.pct * 100)}%</span>
+                                    </span>
+                                ))}
+                            </div>
+                            {/* scorecard COG % per section (Bar/Kitchen/Cafe) */}
+                            {wb.cogs.length > 0 && (
+                                <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'baseline', gap: '16px', marginTop: '11px', paddingTop: '10px', borderTop: '1px solid var(--hairline)' }}>
+                                    <span style={{ fontFamily: MONO, fontSize: '10px', fontWeight: 700, letterSpacing: '0.12em', textTransform: 'uppercase', color: 'var(--text-muted)' }}>COG %</span>
+                                    {wb.cogs.map(s => (
+                                        <span key={s.key} title={`expenses ${usd(s.exp)} ÷ sales ${usd(s.sal)}`} style={{ display: 'inline-flex', alignItems: 'baseline', gap: '6px' }}>
+                                            <span style={{ fontSize: '12.5px', fontWeight: 700, color: 'var(--text-primary)' }}>{s.label}</span>
+                                            <span style={{ fontFamily: DISPLAY, fontSize: '17px', color: s.cog == null ? 'var(--text-muted)' : cogColor(s.cog) }}>{s.cog == null ? '—' : fmtPct(s.cog)}</span>
+                                        </span>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
+                    ))}
+                </div>
+            )}
 
             {/* List */}
             {rows.length === 0 ? (
@@ -166,9 +395,10 @@ function Expenses() {
             ) : (
                 <div style={{ ...glass(), padding: '4px', display: 'flex', flexDirection: 'column' }}>
                     {rows.map((r, i) => (
-                        <Row key={r.id} rec={r} last={i === rows.length - 1}
-                            vendorNames={vendorNames} inventoryDisplay={inventoryDisplay}
-                            onOpen={() => setOpenId(r.id)} />
+                        <Row key={r.id} rec={r} last={i === rows.length - 1} table={expensesTable} isNarrow={isNarrow}
+                            vendors={vendors} locations={locations} inventory={inventory} catChoices={catChoices}
+                            vendorNames={vendorNames} locationNames={locationNames} inventoryDisplay={inventoryDisplay}
+                            onCreateVendor={createVendor} onOpen={() => setOpenId(r.id)} />
                     ))}
                 </div>
             )}
@@ -179,6 +409,7 @@ function Expenses() {
                     rec={openRec} table={expensesTable}
                     vendors={vendors} locations={locations} inventory={inventory}
                     vendorNames={vendorNames} locationNames={locationNames} inventoryDisplay={inventoryDisplay}
+                    onCreateVendor={createVendor}
                     isNarrow={isNarrow} onClose={() => setOpenId(null)}
                 />
             )}
@@ -188,7 +419,8 @@ function Expenses() {
                     rec={null} table={expensesTable}
                     vendors={vendors} locations={locations} inventory={inventory}
                     vendorNames={vendorNames} locationNames={locationNames} inventoryDisplay={inventoryDisplay}
-                    defaultLocation={loc !== 'all' ? [loc] : undefined}
+                    onCreateVendor={createVendor}
+                    defaultLocation={(() => { const only = loc.filter(x => x !== '__none__'); return only.length === 1 ? only : undefined; })()}
                     isNarrow={isNarrow} onClose={() => setCreating(false)}
                 />
             )}
@@ -196,63 +428,84 @@ function Expenses() {
     );
 }
 
-function FilterSelect({ value, onChange, allLabel, options }: { value: string; onChange: (v: string) => void; allLabel: string; options: { value: string; label: string }[] }) {
-    return (
-        <select value={value} onChange={e => onChange(e.target.value)} style={{ ...inputStyle, width: 'auto', flex: '0 0 auto', maxWidth: '190px' }}>
-            <option value="all">{allLabel}</option>
-            {options.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-        </select>
-    );
-}
-
 function Row({
-    rec, last, vendorNames, inventoryDisplay, onOpen,
+    rec, last, table, isNarrow, vendors, locations, inventory, catChoices, vendorNames, locationNames, inventoryDisplay, onCreateVendor, onOpen,
 }: {
-    rec: RecordModel; last: boolean;
-    vendorNames: Map<string, string>; inventoryDisplay: Map<string, string>; onOpen: () => void;
+    rec: RecordModel; last: boolean; table: TableModel; isNarrow: boolean;
+    vendors: RecordModel[]; locations: RecordModel[]; inventory: RecordModel[]; catChoices: string[];
+    vendorNames: Map<string, string>; locationNames: Map<string, string>; inventoryDisplay: Map<string, string>;
+    onCreateVendor: (name: string) => Promise<string | null>;
+    onOpen: () => void;
 }) {
     const item = str(rec, EX.item) || str(rec, EX.itemFromInv) || '(no item)';
     const cats = selectNames(rec, EX.category);
-    const vendor = linkIds(rec, EX.vendors).map(id => vendorNames.get(id)).filter(Boolean).join(', ');
-    const invName = linkIds(rec, EX.inventory).map(id => inventoryDisplay.get(id)).filter(Boolean)[0];
     const date = str(rec, EX.date);
     const amount = num(rec, EX.total);
 
+    // Inline edits write straight to Airtable. `openCount` lifts this row above its
+    // siblings while a popover is open so it isn't covered by rows below.
+    const [openCount, setOpenCount] = useState(0);
+    const [savingField, setSavingField] = useState<string | null>(null);
+    const onToggle = (o: boolean) => setOpenCount(c => Math.max(0, c + (o ? 1 : -1)));
+    async function update(field: string, fields: Record<string, unknown>) {
+        setSavingField(field);
+        try { await table.updateRecordAsync(rec, fields); } catch { /* SWR keeps the old value */ } finally { setSavingField(null); }
+    }
+
+    // The four inline-editable fields (shared between the wide and narrow layouts).
+    const fill = !isNarrow;
+    const vendorEd = <InlineLink value={linkIds(rec, EX.vendors)} names={vendorNames} options={vendors} placeholder="Vendor" fill={fill} saving={savingField === 'vendor'} onToggle={onToggle} onChange={v => update('vendor', { [EX.vendors]: v })} onCreate={onCreateVendor} />;
+    const locEd = <InlineLink value={linkIds(rec, EX.locations)} names={locationNames} options={locations} placeholder="Location" fill={fill} saving={savingField === 'location'} onToggle={onToggle} onChange={v => update('location', { [EX.locations]: v })} />;
+    const catEd = <InlineMulti value={cats} options={catChoices} placeholder="Category" fill={fill} saving={savingField === 'category'} onToggle={onToggle} onChange={v => update('category', { [EX.category]: v })} />;
+    const invEd = <InlineLink value={linkIds(rec, EX.inventory)} names={inventoryDisplay} options={inventory} placeholder="Inventory" fill={fill} saving={savingField === 'inventory'} onToggle={onToggle} onChange={v => update('inventory', { [EX.inventory]: v })} />;
+    const itemCell = <span title={item} style={{ fontWeight: 700, fontSize: '14px', color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'block' }}>{item}</span>;
+    const amountCell = (
+        <div style={{ textAlign: 'right', display: 'flex', flexDirection: 'column', gap: '2px' }}>
+            <span style={{ fontFamily: DISPLAY, fontSize: '18px', color: 'var(--text-primary)' }}>{usd(amount)}</span>
+            {date && <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>{date}</span>}
+        </div>
+    );
+
+    const shared = {
+        onClick: onOpen,
+        onMouseEnter: (e: React.MouseEvent<HTMLDivElement>) => { e.currentTarget.style.background = 'var(--glass-bg-soft)'; },
+        onMouseLeave: (e: React.MouseEvent<HTMLDivElement>) => { e.currentTarget.style.background = 'transparent'; },
+    };
+
+    // Wide: one aligned grid row — Item | Vendor | Location | Category | Inventory | Amount.
+    if (!isNarrow) {
+        return (
+            <div {...shared}
+                style={{
+                    display: 'grid', gridTemplateColumns: 'minmax(120px, 1.4fr) 1fr 0.8fr 1.1fr 1.1fr auto',
+                    alignItems: 'center', gap: '10px', padding: '8px 14px',
+                    borderRadius: 'var(--radius-sm)', cursor: 'pointer',
+                    position: 'relative', zIndex: openCount > 0 ? 5 : 'auto',
+                    borderBottom: last ? 'none' : '1px solid var(--hairline)',
+                }}>
+                <div style={{ minWidth: 0 }}>{itemCell}</div>
+                {vendorEd}{locEd}{catEd}{invEd}
+                {amountCell}
+            </div>
+        );
+    }
+
+    // Narrow: item line, then the editable fields wrap below, amount on the right.
     return (
-        <div onClick={onOpen}
-            onMouseEnter={e => { e.currentTarget.style.background = 'var(--glass-bg-soft)'; }}
-            onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}
+        <div {...shared}
             style={{
-                display: 'flex', alignItems: 'center', gap: '14px', padding: '13px 14px',
+                display: 'flex', alignItems: 'center', gap: '12px', padding: '9px 14px',
                 borderRadius: 'var(--radius-sm)', cursor: 'pointer',
+                position: 'relative', zIndex: openCount > 0 ? 5 : 'auto',
                 borderBottom: last ? 'none' : '1px solid var(--hairline)',
             }}>
-            {/* left: item (+ linked inventory) + category */}
-            <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: '5px' }}>
-                <span style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-                    <span style={{ fontWeight: 700, fontSize: '14px', color: 'var(--text-primary)' }}>{item}</span>
-                    {invName ? (
-                        <span title={`Inventory: ${invName}`} style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', fontSize: '12px', fontWeight: 700, color: PALETTE.olive }}>
-                            <PackageIcon size={12} weight="bold" /> {invName}
-                        </span>
-                    ) : (
-                        <span title="No inventory item linked" style={{ fontSize: '15px', fontWeight: 800, color: PALETTE.gold, lineHeight: 1 }}>–</span>
-                    )}
-                </span>
-                {cats.length > 0 ? (
-                    <div style={{ display: 'flex', gap: '5px', flexWrap: 'wrap' }}>
-                        {cats.map(c => <Pill key={c} text={c} tone="olive" />)}
-                    </div>
-                ) : (
-                    <span style={{ fontSize: '12px', fontStyle: 'italic', color: 'var(--accent-2, #c0623b)' }}>assign category</span>
-                )}
+            <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                {itemCell}
+                <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', alignItems: 'center' }}>
+                    {vendorEd}{locEd}{catEd}{invEd}
+                </div>
             </div>
-            {/* right: total + vendor + date */}
-            <div style={{ flexShrink: 0, textAlign: 'right', display: 'flex', flexDirection: 'column', gap: '3px', minWidth: '92px' }}>
-                <span style={{ fontFamily: DISPLAY, fontSize: '18px', color: 'var(--text-primary)' }}>{usd(amount)}</span>
-                {vendor && <span style={{ fontSize: '12.5px', color: 'var(--text-muted)', maxWidth: '160px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{vendor}</span>}
-                {date && <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>{date}</span>}
-            </div>
+            <div style={{ flexShrink: 0, minWidth: '92px' }}>{amountCell}</div>
         </div>
     );
 }
@@ -266,11 +519,12 @@ type Draft = {
 };
 
 function DetailDrawer({
-    rec, table, vendors, locations, inventory, vendorNames, locationNames, inventoryDisplay, isNarrow, onClose, defaultLocation,
+    rec, table, vendors, locations, inventory, vendorNames, locationNames, inventoryDisplay, onCreateVendor, isNarrow, onClose, defaultLocation,
 }: {
     rec?: RecordModel | null; table: TableModel;
     vendors: RecordModel[]; locations: RecordModel[]; inventory: RecordModel[];
     vendorNames: Map<string, string>; locationNames: Map<string, string>; inventoryDisplay: Map<string, string>;
+    onCreateVendor: (name: string) => Promise<string | null>;
     isNarrow: boolean; onClose: () => void; defaultLocation?: string[];
 }) {
     const init: Draft = useMemo(() => (rec ? {
@@ -374,7 +628,7 @@ function DetailDrawer({
 
                 {/* vendor + location moved up */}
                 <Field label="Vendor">
-                    <LinkPicker options={vendors} names={vendorNames} value={d.vendor} onChange={v => set('vendor', v)} placeholder="Search vendors…" />
+                    <LinkPicker options={vendors} names={vendorNames} value={d.vendor} onChange={v => set('vendor', v)} placeholder="Search or add a vendor…" onCreate={onCreateVendor} />
                 </Field>
                 <Field label="Location">
                     <LinkPicker options={locations} names={locationNames} value={d.location} onChange={v => set('location', v)} placeholder="Search locations…" />

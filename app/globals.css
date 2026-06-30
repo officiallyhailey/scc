@@ -61,6 +61,15 @@ body {
     100% { background-position: -200% 0; }
 }
 
+/* Inline-edit save indicator: a thin accent segment slides across the chip's
+   bottom edge while the change is being written to Airtable. */
+.dd-savebar { position: absolute; left: 0; right: 0; bottom: 0; height: 2.5px; overflow: hidden; background: var(--accent-soft); }
+.dd-savebar::after {
+    content: ''; position: absolute; top: 0; bottom: 0; width: 40%;
+    border-radius: 2px; background: var(--accent); animation: ddBar 0.9s ease-in-out infinite;
+}
+@keyframes ddBar { 0% { left: -40%; } 100% { left: 100%; } }
+
 .dd-fade-in { animation: ddFadeIn 0.5s ease-out; }
 
 @keyframes ddFadeIn {
@@ -94,7 +103,7 @@ body {
 
 @media (prefers-reduced-motion: reduce) {
     .dd-ping::after, .dd-bob, .dd-shimmer, .dd-fade-in, .dd-loader-row,
-    .dd-pop, .dd-burst, .dd-confetti { animation: none !important; }
+    .dd-pop, .dd-burst, .dd-confetti, .dd-savebar::after { animation: none !important; }
     .dd-burst { display: none; }
     .dd-confetti { display: none; }
 }

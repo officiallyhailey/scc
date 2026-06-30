@@ -4,7 +4,7 @@ import type { NextRequest } from 'next/server';
 import { COOKIE_NAME, verifySessionValue } from '@/lib/auth';
 
 // Paths that never need auth (the login page + its API, plus public assets).
-const ALWAYS_ALLOW = ['/login', '/api/login', '/manifest.webmanifest', '/icon.svg'];
+const ALWAYS_ALLOW = ['/login', '/api/login', '/manifest.webmanifest', '/icon.svg', '/logo.png'];
 
 export async function proxy(req: NextRequest) {
     const { pathname } = req.nextUrl;
@@ -30,5 +30,5 @@ export async function proxy(req: NextRequest) {
 }
 
 export const config = {
-    matcher: ['/((?!_next/static|_next/image|favicon.ico|manifest.webmanifest|icon.svg).*)'],
+    matcher: ['/((?!_next/static|_next/image|favicon.ico|manifest.webmanifest|icon.svg|logo.png).*)'],
 };

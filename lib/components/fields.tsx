@@ -79,15 +79,89 @@ export function MultiSelectDropdown({ options, value, onChange, placeholder }: {
     );
 }
 
+// ── multi-select FILTER (filter bar): {value,label} options, optional search ─────
+// Closed: shows the active count / single label / an "all" placeholder. Open: a
+// checkbox list (with a search box for long lists) + a "Clear" row. An empty
+// selection means "no filter" (all rows). Values can include a '__none__' sentinel
+// that callers treat as "this field is blank".
+export function MultiFilter({
+    allLabel, options, value, onChange, searchable,
+}: {
+    allLabel: string; options: { value: string; label: string }[];
+    value: string[]; onChange: (v: string[]) => void; searchable?: boolean;
+}) {
+    const [open, setOpen] = useState(false);
+    const [q, setQ] = useState('');
+    const ref = useRef<HTMLDivElement>(null);
+    useEffect(() => {
+        if (!open) return;
+        const onDoc = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false); };
+        document.addEventListener('mousedown', onDoc);
+        return () => document.removeEventListener('mousedown', onDoc);
+    }, [open]);
+    const toggle = (v: string) => onChange(value.includes(v) ? value.filter(x => x !== v) : [...value, v]);
+    const label = value.length === 0 ? allLabel
+        : value.length === 1 ? (options.find(o => o.value === value[0])?.label ?? '1 selected')
+        : `${value.length} selected`;
+    const shown = searchable && q.trim()
+        ? options.filter(o => o.label.toLowerCase().includes(q.trim().toLowerCase()))
+        : options;
+    return (
+        <div ref={ref} style={{ position: 'relative', flex: '0 0 auto' }}>
+            <button type="button" onClick={() => setOpen(o => !o)}
+                style={{ ...inputStyle, width: 'auto', maxWidth: '210px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '7px', textAlign: 'left' }}>
+                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: value.length ? 'var(--text-primary)' : 'var(--text-muted)', fontWeight: value.length ? 700 : 400 }}>{label}</span>
+                <CaretDownIcon size={14} weight="bold" style={{ marginLeft: 'auto', flexShrink: 0, color: 'var(--text-muted)', transform: open ? 'rotate(180deg)' : 'none', transition: 'transform .12s' }} />
+            </button>
+            {open && (
+                <div style={{ ...dropdown, right: 'auto', minWidth: '230px' }}>
+                    {searchable && (
+                        <input autoFocus value={q} onChange={e => setQ(e.target.value)} placeholder="Search…"
+                            style={{ ...inputStyle, borderRadius: 0, border: 'none', borderBottom: '1px solid var(--hairline)' }} />
+                    )}
+                    {value.length > 0 && (
+                        <div onClick={() => onChange([])} style={{ ...dropItem, fontSize: '12px', fontWeight: 700, color: 'var(--accent-deep)' }}>Clear selection</div>
+                    )}
+                    {shown.map(o => {
+                        const on = value.includes(o.value);
+                        return (
+                            <div key={o.value} onClick={() => toggle(o.value)} style={{ ...dropItem, display: 'flex', alignItems: 'center', gap: '9px', color: on ? 'var(--text-primary)' : 'var(--text-muted)', fontWeight: on ? 700 : 500 }}>
+                                <span style={{ width: '17px', height: '17px', borderRadius: '5px', border: '1px solid var(--hairline)', background: on ? 'var(--accent)' : 'transparent', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                                    {on && <CheckIcon size={12} weight="bold" color="var(--accent-text)" />}
+                                </span>
+                                {o.label}
+                            </div>
+                        );
+                    })}
+                </div>
+            )}
+        </div>
+    );
+}
+
 // ── searchable single linked-record picker (stores [id]) ────────────────────────
-export function LinkPicker({ options, names, value, onChange, placeholder }: { options: RecordModel[]; names: Map<string, string>; value: string[]; onChange: (v: string[]) => void; placeholder?: string }) {
+// `onCreate` (optional): when the typed name matches nothing, offer to create the record
+// (e.g. a new vendor) and link it. Returns the new id (or null on failure).
+export function LinkPicker({ options, names, value, onChange, placeholder, onCreate }: { options: RecordModel[]; names: Map<string, string>; value: string[]; onChange: (v: string[]) => void; placeholder?: string; onCreate?: (name: string) => Promise<string | null> }) {
     const [q, setQ] = useState('');
     const [open, setOpen] = useState(false);
+    const [creating, setCreating] = useState(false);
     const current = value[0];
     const matches = useMemo(() => {
         const n = q.trim().toLowerCase();
         return options.filter(o => (n ? (names.get(o.id) ?? '').toLowerCase().includes(n) : true)).slice(0, 40);
     }, [q, options, names]);
+    const trimmed = q.trim();
+    const exact = options.some(o => (names.get(o.id) ?? '').trim().toLowerCase() === trimmed.toLowerCase());
+    const showCreate = !!onCreate && trimmed.length > 0 && !exact;
+    async function create() {
+        if (!onCreate || creating) return;
+        setCreating(true);
+        const id = await onCreate(trimmed);
+        setCreating(false);
+        if (id) onChange([id]);
+        setOpen(false); setQ('');
+    }
 
     if (current && !open) {
         return (
@@ -100,8 +174,11 @@ export function LinkPicker({ options, names, value, onChange, placeholder }: { o
     return (
         <div style={{ position: 'relative' }}>
             <input value={q} placeholder={placeholder} onFocus={() => setOpen(true)} onBlur={() => setTimeout(() => setOpen(false), 150)} onChange={e => setQ(e.target.value)} style={inputStyle} />
-            {open && matches.length > 0 && (
-                <div style={dropdown}>{matches.map(o => <div key={o.id} onMouseDown={() => { onChange([o.id]); setOpen(false); setQ(''); }} style={dropItem}>{names.get(o.id) ?? '(untitled)'}</div>)}</div>
+            {open && (matches.length > 0 || showCreate) && (
+                <div style={dropdown}>
+                    {matches.map(o => <div key={o.id} onMouseDown={() => { onChange([o.id]); setOpen(false); setQ(''); }} style={dropItem}>{names.get(o.id) ?? '(untitled)'}</div>)}
+                    {showCreate && <div onMouseDown={create} style={{ ...dropItem, color: 'var(--accent-deep)', fontWeight: 700 }}>{creating ? 'Adding…' : `+ Add “${trimmed}”`}</div>}
+                </div>
             )}
         </div>
     );
@@ -128,6 +205,193 @@ export function MultiLinkPicker({ options, names, value, onChange, placeholder }
             </div>
             {open && matches.length > 0 && (
                 <div style={dropdown}>{matches.map(o => <div key={o.id} onMouseDown={() => { onChange([...value, o.id]); setQ(''); }} style={dropItem}>{names.get(o.id) ?? '(untitled)'}</div>)}</div>
+            )}
+        </div>
+    );
+}
+
+// ── inline editors for list rows (edit without opening the drawer) ──────────────
+// Compact chip that opens a popover; stops click propagation so the row's own
+// onClick (open drawer) doesn't fire. `onToggle` lets the parent row lift its
+// z-index while open so the popover isn't covered by later rows.
+const inlineChip: React.CSSProperties = {
+    position: 'relative', overflow: 'hidden',
+    display: 'inline-flex', alignItems: 'center', gap: '5px', maxWidth: '200px',
+    padding: '3px 8px', borderRadius: '7px', border: '1px solid var(--hairline)',
+    background: 'var(--glass-bg)', cursor: 'pointer', fontFamily: 'var(--font-body)',
+    fontSize: '12px', fontWeight: 600, lineHeight: 1.55,
+};
+const ellip: React.CSSProperties = { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' };
+
+// single linked-record (Vendor, Location, Inventory): searchable popover, stores [id].
+// `fill` makes the chip stretch to its container width (for aligned grid columns).
+export function InlineLink({ value, names, options, placeholder, onChange, onToggle, saving, fill, onCreate }: {
+    value: string[]; names: Map<string, string>; options: RecordModel[]; placeholder: string;
+    onChange: (v: string[]) => void; onToggle?: (open: boolean) => void; saving?: boolean; fill?: boolean;
+    onCreate?: (name: string) => Promise<string | null>;
+}) {
+    const [open, setOpen] = useState(false);
+    const [q, setQ] = useState('');
+    const [creating, setCreating] = useState(false);
+    const ref = useRef<HTMLDivElement>(null);
+    useEffect(() => { onToggle?.(open); }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
+    useEffect(() => {
+        if (!open) return;
+        const onDoc = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false); };
+        document.addEventListener('mousedown', onDoc);
+        return () => document.removeEventListener('mousedown', onDoc);
+    }, [open]);
+    const current = value[0];
+    const matches = useMemo(() => {
+        const n = q.trim().toLowerCase();
+        return options.filter(o => (n ? (names.get(o.id) ?? '').toLowerCase().includes(n) : true)).slice(0, 40);
+    }, [q, options, names]);
+    const trimmed = q.trim();
+    const exact = options.some(o => (names.get(o.id) ?? '').trim().toLowerCase() === trimmed.toLowerCase());
+    const showCreate = !!onCreate && trimmed.length > 0 && !exact;
+    async function create() {
+        if (!onCreate || creating) return;
+        setCreating(true);
+        const id = await onCreate(trimmed);
+        setCreating(false);
+        if (id) onChange([id]);
+        setOpen(false); setQ('');
+    }
+    return (
+        <div ref={ref} style={{ position: 'relative', width: fill ? '100%' : undefined, minWidth: 0 }} onClick={e => e.stopPropagation()}>
+            <button type="button" onClick={() => setOpen(o => !o)} style={{ ...inlineChip, maxWidth: fill ? undefined : '200px', width: fill ? '100%' : undefined, opacity: saving ? 0.7 : 1, color: current ? 'var(--text-primary)' : 'var(--text-muted)' }}>
+                <span style={{ ...ellip, ...(fill ? { flex: 1, minWidth: 0 } : {}) }}>{current ? (names.get(current) ?? '(item)') : `+ ${placeholder}`}</span>
+                <CaretDownIcon size={11} weight="bold" style={{ opacity: 0.55, flexShrink: 0 }} />
+                {saving && <span className="dd-savebar" aria-hidden />}
+            </button>
+            {open && (
+                <div style={{ ...dropdown, right: 'auto', minWidth: '210px' }}>
+                    <input autoFocus value={q} onChange={e => setQ(e.target.value)} placeholder={`Search ${placeholder.toLowerCase()}…`} style={{ ...inputStyle, borderRadius: 0, border: 'none', borderBottom: '1px solid var(--hairline)' }} />
+                    {current && <div onClick={() => { onChange([]); setOpen(false); }} style={{ ...dropItem, fontSize: '12px', fontWeight: 700, color: 'var(--accent-deep)' }}>Clear</div>}
+                    {matches.map(o => <div key={o.id} onClick={() => { onChange([o.id]); setOpen(false); setQ(''); }} style={dropItem}>{names.get(o.id) ?? '(untitled)'}</div>)}
+                    {showCreate && <div onClick={create} style={{ ...dropItem, color: 'var(--accent-deep)', fontWeight: 700 }}>{creating ? 'Adding…' : `+ Add “${trimmed}”`}</div>}
+                </div>
+            )}
+        </div>
+    );
+}
+
+// multi-select choices (Category): checkbox popover, stays open while toggling.
+export function InlineMulti({ value, options, onChange, placeholder, onToggle, saving, fill }: {
+    value: string[]; options: string[]; onChange: (v: string[]) => void; placeholder: string;
+    onToggle?: (open: boolean) => void; saving?: boolean; fill?: boolean;
+}) {
+    const [open, setOpen] = useState(false);
+    const ref = useRef<HTMLDivElement>(null);
+    useEffect(() => { onToggle?.(open); }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
+    useEffect(() => {
+        if (!open) return;
+        const onDoc = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false); };
+        document.addEventListener('mousedown', onDoc);
+        return () => document.removeEventListener('mousedown', onDoc);
+    }, [open]);
+    const toggle = (o: string) => onChange(value.includes(o) ? value.filter(x => x !== o) : [...value, o]);
+    return (
+        <div ref={ref} style={{ position: 'relative', width: fill ? '100%' : undefined, minWidth: 0 }} onClick={e => e.stopPropagation()}>
+            <button type="button" onClick={() => setOpen(o => !o)} style={{ ...inlineChip, maxWidth: fill ? undefined : '200px', width: fill ? '100%' : undefined, opacity: saving ? 0.7 : 1, color: value.length ? 'var(--text-primary)' : 'var(--text-muted)' }}>
+                <span style={{ ...ellip, ...(fill ? { flex: 1, minWidth: 0 } : {}) }}>{value.length ? value.join(', ') : `+ ${placeholder}`}</span>
+                <CaretDownIcon size={11} weight="bold" style={{ opacity: 0.55, flexShrink: 0 }} />
+                {saving && <span className="dd-savebar" aria-hidden />}
+            </button>
+            {open && (
+                <div style={{ ...dropdown, right: 'auto', minWidth: '200px' }}>
+                    {options.map(o => {
+                        const on = value.includes(o);
+                        return (
+                            <div key={o} onClick={() => toggle(o)} style={{ ...dropItem, display: 'flex', alignItems: 'center', gap: '9px', color: on ? 'var(--text-primary)' : 'var(--text-muted)', fontWeight: on ? 700 : 500 }}>
+                                <span style={{ width: '17px', height: '17px', borderRadius: '5px', border: '1px solid var(--hairline)', background: on ? 'var(--accent)' : 'transparent', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                                    {on && <CheckIcon size={12} weight="bold" color="var(--accent-text)" />}
+                                </span>
+                                {o}
+                            </div>
+                        );
+                    })}
+                </div>
+            )}
+        </div>
+    );
+}
+
+// single-select choice (Department, Type): popover list, stores a string ('' clears it).
+export function InlineSelect({ value, options, placeholder, onChange, onToggle, saving, fill }: {
+    value: string; options: string[]; placeholder: string;
+    onChange: (v: string) => void; onToggle?: (open: boolean) => void; saving?: boolean; fill?: boolean;
+}) {
+    const [open, setOpen] = useState(false);
+    const ref = useRef<HTMLDivElement>(null);
+    useEffect(() => { onToggle?.(open); }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
+    useEffect(() => {
+        if (!open) return;
+        const onDoc = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false); };
+        document.addEventListener('mousedown', onDoc);
+        return () => document.removeEventListener('mousedown', onDoc);
+    }, [open]);
+    return (
+        <div ref={ref} style={{ position: 'relative', width: fill ? '100%' : undefined, minWidth: 0 }} onClick={e => e.stopPropagation()}>
+            <button type="button" onClick={() => setOpen(o => !o)} style={{ ...inlineChip, maxWidth: fill ? undefined : '200px', width: fill ? '100%' : undefined, opacity: saving ? 0.7 : 1, color: value ? 'var(--text-primary)' : 'var(--text-muted)' }}>
+                <span style={{ ...ellip, ...(fill ? { flex: 1, minWidth: 0 } : {}) }}>{value || `+ ${placeholder}`}</span>
+                <CaretDownIcon size={11} weight="bold" style={{ opacity: 0.55, flexShrink: 0 }} />
+                {saving && <span className="dd-savebar" aria-hidden />}
+            </button>
+            {open && (
+                <div style={{ ...dropdown, right: 'auto', minWidth: '180px' }}>
+                    {value && <div onClick={() => { onChange(''); setOpen(false); }} style={{ ...dropItem, fontSize: '12px', fontWeight: 700, color: 'var(--accent-deep)' }}>Clear</div>}
+                    {options.map(o => (
+                        <div key={o} onClick={() => { onChange(o); setOpen(false); }} style={{ ...dropItem, color: o === value ? 'var(--text-primary)' : 'var(--text-muted)', fontWeight: o === value ? 700 : 500 }}>{o}</div>
+                    ))}
+                </div>
+            )}
+        </div>
+    );
+}
+
+// multi linked-record (Tracking Locations): searchable checkbox popover, stores [id, …].
+export function InlineMultiLink({ value, names, options, placeholder, onChange, onToggle, saving, fill }: {
+    value: string[]; names: Map<string, string>; options: RecordModel[]; placeholder: string;
+    onChange: (v: string[]) => void; onToggle?: (open: boolean) => void; saving?: boolean; fill?: boolean;
+}) {
+    const [open, setOpen] = useState(false);
+    const [q, setQ] = useState('');
+    const ref = useRef<HTMLDivElement>(null);
+    useEffect(() => { onToggle?.(open); }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
+    useEffect(() => {
+        if (!open) return;
+        const onDoc = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false); };
+        document.addEventListener('mousedown', onDoc);
+        return () => document.removeEventListener('mousedown', onDoc);
+    }, [open]);
+    const toggle = (id: string) => onChange(value.includes(id) ? value.filter(x => x !== id) : [...value, id]);
+    const matches = useMemo(() => {
+        const n = q.trim().toLowerCase();
+        return options.filter(o => (n ? (names.get(o.id) ?? '').toLowerCase().includes(n) : true)).slice(0, 40);
+    }, [q, options, names]);
+    return (
+        <div ref={ref} style={{ position: 'relative', width: fill ? '100%' : undefined, minWidth: 0 }} onClick={e => e.stopPropagation()}>
+            <button type="button" onClick={() => setOpen(o => !o)} style={{ ...inlineChip, maxWidth: fill ? undefined : '200px', width: fill ? '100%' : undefined, opacity: saving ? 0.7 : 1, color: value.length ? 'var(--text-primary)' : 'var(--text-muted)' }}>
+                <span style={{ ...ellip, ...(fill ? { flex: 1, minWidth: 0 } : {}) }}>{value.length ? value.map(id => names.get(id) ?? '?').join(', ') : `+ ${placeholder}`}</span>
+                <CaretDownIcon size={11} weight="bold" style={{ opacity: 0.55, flexShrink: 0 }} />
+                {saving && <span className="dd-savebar" aria-hidden />}
+            </button>
+            {open && (
+                <div style={{ ...dropdown, right: 'auto', minWidth: '210px' }}>
+                    <input autoFocus value={q} onChange={e => setQ(e.target.value)} placeholder={`Search ${placeholder.toLowerCase()}…`} style={{ ...inputStyle, borderRadius: 0, border: 'none', borderBottom: '1px solid var(--hairline)' }} />
+                    {matches.map(o => {
+                        const on = value.includes(o.id);
+                        return (
+                            <div key={o.id} onClick={() => toggle(o.id)} style={{ ...dropItem, display: 'flex', alignItems: 'center', gap: '9px', color: on ? 'var(--text-primary)' : 'var(--text-muted)', fontWeight: on ? 700 : 500 }}>
+                                <span style={{ width: '17px', height: '17px', borderRadius: '5px', border: '1px solid var(--hairline)', background: on ? 'var(--accent)' : 'transparent', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                                    {on && <CheckIcon size={12} weight="bold" color="var(--accent-text)" />}
+                                </span>
+                                {names.get(o.id) ?? '(untitled)'}
+                            </div>
+                        );
+                    })}
+                </div>
             )}
         </div>
     );
