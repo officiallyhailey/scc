@@ -15,7 +15,7 @@ import { AirtableBoundary, useBase, useRecords } from '@/lib/airtable/hooks';
 import type { RecordModel, TableModel } from '@/lib/airtable/models';
 import { useIsNarrow } from '@/lib/useIsNarrow';
 import { glass, Pill, Button, DISPLAY, MONO, inputStyle, MoneyInput, PALETTE } from '@/lib/components/ui';
-import { Field, LinkPicker, MultiFilter, InlineLink, iconBtn } from '@/lib/components/fields';
+import { Field, LinkPicker, MultiFilter, InlineLink, ColumnHeader, iconBtn } from '@/lib/components/fields';
 import { ProductForm } from '@/lib/components/ProductForm';
 import { TABLES, SALE } from '@/lib/silk/schema';
 import { usd, num, str, numStr, linkIds, selectNames, nameMap, weekKey, parseNum } from '@/lib/silk/cells';
@@ -40,6 +40,8 @@ function matchMulti(selected: string[], rowVals: string[]): boolean {
 
 const row2: React.CSSProperties = { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' };
 const row3: React.CSSProperties = { display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '12px' };
+// Shared grid template for the desktop list — used by both the column header and each SaleRow.
+const SALE_GRID = 'minmax(140px, 1.6fr) 1fr 1.4fr 150px';
 
 export default function SalesPage() {
     const [mounted, setMounted] = useState(false);
@@ -231,6 +233,7 @@ function Sales() {
                 </div>
             ) : (
                 <div style={{ ...glass(), padding: '4px', display: 'flex', flexDirection: 'column' }}>
+                    {!isNarrow && <ColumnHeader gridCols={SALE_GRID} cols={[{ label: 'Item' }, { label: 'Category' }, { label: 'Linked Product' }, { label: 'Net Sales', right: true }]} />}
                     {rows.map((r, i) => (
                         <SaleRow key={r.id} rec={r} last={i === rows.length - 1} table={salesTable} isNarrow={isNarrow}
                             products={products} productNames={productNames}
@@ -316,7 +319,7 @@ function SaleRow({
         return (
             <div {...shared}
                 style={{
-                    display: 'grid', gridTemplateColumns: 'minmax(140px, 1.6fr) 1fr 1.4fr 150px',
+                    display: 'grid', gridTemplateColumns: SALE_GRID,
                     alignItems: 'center', gap: '10px', padding: '8px 14px',
                     borderRadius: 'var(--radius-sm)', cursor: 'pointer',
                     position: 'relative', zIndex: openCount > 0 ? 5 : 'auto',

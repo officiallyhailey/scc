@@ -16,7 +16,7 @@ import { AirtableBoundary, useBase, useRecords } from '@/lib/airtable/hooks';
 import type { RecordModel, TableModel } from '@/lib/airtable/models';
 import { useIsNarrow } from '@/lib/useIsNarrow';
 import { glass, Pill, Button, DISPLAY, MONO, inputStyle, MoneyInput, PALETTE } from '@/lib/components/ui';
-import { Field, PlainSelect, MultiSelectDropdown, MultiFilter, AutoTextarea, LinkPicker, InlineLink, InlineMulti, iconBtn } from '@/lib/components/fields';
+import { Field, PlainSelect, MultiSelectDropdown, MultiFilter, AutoTextarea, LinkPicker, InlineLink, InlineMulti, ColumnHeader, iconBtn } from '@/lib/components/fields';
 import { InventoryForm } from '@/lib/components/InventoryForm';
 import { TABLES, EX, INV, SALE } from '@/lib/silk/schema';
 import { usd, num, str, numStr, linkIds, selectNames, fieldChoices, nameMap, weekKey, parseNum } from '@/lib/silk/cells';
@@ -43,6 +43,8 @@ function matchMulti(selected: string[], rowVals: string[]): boolean {
 }
 
 // Category → bar/swatch colour for the weekly breakdown (Bar gold, Kitchen slate; others pooled).
+// Shared grid template for the desktop list — used by both the column header and each Row.
+const EX_GRID = 'minmax(120px, 1.4fr) 1fr 0.8fr 1.1fr 1.1fr 120px';
 const CAT_FIXED: Record<string, string> = { Bar: 'var(--accent)', Kitchen: 'var(--c-slate)', Uncategorized: 'var(--accent-2)' };
 const CAT_POOL = ['#8a979c', '#9a7d27', '#5c6539', '#6b8a8f', '#b58a3a', '#7a6a9c', '#3f7d6b', '#a4684b'];
 const fmtPct = (r: number) => `${Math.round(r * 100)}%`; // whole percent, matching the scorecard
@@ -397,6 +399,7 @@ function Expenses() {
                 </div>
             ) : (
                 <div style={{ ...glass(), padding: '4px', display: 'flex', flexDirection: 'column' }}>
+                    {!isNarrow && <ColumnHeader gridCols={EX_GRID} cols={[{ label: 'Item' }, { label: 'Vendor' }, { label: 'Location' }, { label: 'Category' }, { label: 'Inventory' }, { label: 'Amount', right: true }]} />}
                     {rows.map((r, i) => (
                         <Row key={r.id} rec={r} last={i === rows.length - 1} table={expensesTable} isNarrow={isNarrow}
                             vendors={vendors} locations={locations} inventory={inventory} catChoices={catChoices}
@@ -480,7 +483,7 @@ function Row({
         return (
             <div {...shared}
                 style={{
-                    display: 'grid', gridTemplateColumns: 'minmax(120px, 1.4fr) 1fr 0.8fr 1.1fr 1.1fr auto',
+                    display: 'grid', gridTemplateColumns: EX_GRID,
                     alignItems: 'center', gap: '10px', padding: '8px 14px',
                     borderRadius: 'var(--radius-sm)', cursor: 'pointer',
                     position: 'relative', zIndex: openCount > 0 ? 5 : 'auto',

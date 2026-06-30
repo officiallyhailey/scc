@@ -266,7 +266,8 @@ export function InlineLink({ value, names, options, placeholder, onChange, onTog
             </button>
             {open && (
                 <div style={{ ...dropdown, right: 'auto', minWidth: '210px' }}>
-                    <input autoFocus value={q} onChange={e => setQ(e.target.value)} placeholder={`Search ${placeholder.toLowerCase()}…`} style={{ ...inputStyle, borderRadius: 0, border: 'none', borderBottom: '1px solid var(--hairline)' }} />
+                    <div style={dropHeader}>{placeholder}</div>
+                    <input autoFocus value={q} onChange={e => setQ(e.target.value)} placeholder="Search…" style={{ ...inputStyle, borderRadius: 0, border: 'none', borderBottom: '1px solid var(--hairline)' }} />
                     {current && <div onClick={() => { onChange([]); setOpen(false); }} style={{ ...dropItem, fontSize: '12px', fontWeight: 700, color: 'var(--accent-deep)' }}>Clear</div>}
                     {matches.map(o => <div key={o.id} onClick={() => { onChange([o.id]); setOpen(false); setQ(''); }} style={dropItem}>{names.get(o.id) ?? '(untitled)'}</div>)}
                     {showCreate && <div onClick={create} style={{ ...dropItem, color: 'var(--accent-deep)', fontWeight: 700 }}>{creating ? 'Adding…' : `+ Add “${trimmed}”`}</div>}
@@ -300,6 +301,7 @@ export function InlineMulti({ value, options, onChange, placeholder, onToggle, s
             </button>
             {open && (
                 <div style={{ ...dropdown, right: 'auto', minWidth: '200px' }}>
+                    <div style={dropHeader}>{placeholder}</div>
                     {options.map(o => {
                         const on = value.includes(o);
                         return (
@@ -340,6 +342,7 @@ export function InlineSelect({ value, options, placeholder, onChange, onToggle, 
             </button>
             {open && (
                 <div style={{ ...dropdown, right: 'auto', minWidth: '180px' }}>
+                    <div style={dropHeader}>{placeholder}</div>
                     {value && <div onClick={() => { onChange(''); setOpen(false); }} style={{ ...dropItem, fontSize: '12px', fontWeight: 700, color: 'var(--accent-deep)' }}>Clear</div>}
                     {options.map(o => (
                         <div key={o} onClick={() => { onChange(o); setOpen(false); }} style={{ ...dropItem, color: o === value ? 'var(--text-primary)' : 'var(--text-muted)', fontWeight: o === value ? 700 : 500 }}>{o}</div>
@@ -379,7 +382,8 @@ export function InlineMultiLink({ value, names, options, placeholder, onChange, 
             </button>
             {open && (
                 <div style={{ ...dropdown, right: 'auto', minWidth: '210px' }}>
-                    <input autoFocus value={q} onChange={e => setQ(e.target.value)} placeholder={`Search ${placeholder.toLowerCase()}…`} style={{ ...inputStyle, borderRadius: 0, border: 'none', borderBottom: '1px solid var(--hairline)' }} />
+                    <div style={dropHeader}>{placeholder}</div>
+                    <input autoFocus value={q} onChange={e => setQ(e.target.value)} placeholder="Search…" style={{ ...inputStyle, borderRadius: 0, border: 'none', borderBottom: '1px solid var(--hairline)' }} />
                     {matches.map(o => {
                         const on = value.includes(o.id);
                         return (
@@ -402,3 +406,16 @@ export const iconBtn: React.CSSProperties = { width: '36px', height: '36px', bor
 export const iconBtnSm: React.CSSProperties = { width: '26px', height: '26px', borderRadius: '7px', border: 'none', background: 'rgba(50,70,79,0.10)', color: 'var(--text-muted)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 };
 export const dropdown: React.CSSProperties = { position: 'absolute', top: 'calc(100% + 4px)', left: 0, right: 0, zIndex: 50, maxHeight: '260px', overflowY: 'auto', borderRadius: 'var(--radius-sm)', background: 'var(--glass-bg-strong)', backdropFilter: 'blur(20px)', WebkitBackdropFilter: 'blur(20px)', border: '1px solid var(--glass-border)', boxShadow: 'var(--shadow)' };
 export const dropItem: React.CSSProperties = { padding: '9px 12px', fontSize: '13.5px', color: 'var(--text-primary)', cursor: 'pointer', borderBottom: '1px solid var(--hairline)' };
+// Field-name header shown at the top of an inline editor's popover (so you know what you're editing).
+const dropHeader: React.CSSProperties = { padding: '8px 12px 6px', fontFamily: MONO, fontSize: '10px', fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--text-muted)', borderBottom: '1px solid var(--hairline)', position: 'sticky', top: 0, background: 'var(--glass-bg-strong)' };
+
+// Desktop column-header row for the list tables. Pass the row's exact grid template so the
+// labels line up over their columns. Render only on wide screens (rows reflow to cards on mobile).
+const colHeadStyle: React.CSSProperties = { fontFamily: MONO, fontSize: '10px', fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' };
+export function ColumnHeader({ gridCols, cols }: { gridCols: string; cols: { label: string; right?: boolean }[] }) {
+    return (
+        <div style={{ display: 'grid', gridTemplateColumns: gridCols, gap: '10px', padding: '5px 14px 9px', borderBottom: '1px solid var(--hairline)' }}>
+            {cols.map((c, i) => <span key={i} style={{ ...colHeadStyle, textAlign: c.right ? 'right' : 'left' }}>{c.label}</span>)}
+        </div>
+    );
+}

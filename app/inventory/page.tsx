@@ -11,10 +11,13 @@ import { AirtableBoundary, useBase, useRecords } from '@/lib/airtable/hooks';
 import type { RecordModel, TableModel } from '@/lib/airtable/models';
 import { useIsNarrow } from '@/lib/useIsNarrow';
 import { glass, Button, DISPLAY, MONO, inputStyle, PALETTE } from '@/lib/components/ui';
-import { InlineLink, InlineSelect, InlineMultiLink } from '@/lib/components/fields';
+import { InlineLink, InlineSelect, InlineMultiLink, ColumnHeader } from '@/lib/components/fields';
 import { InventoryForm } from '@/lib/components/InventoryForm';
 import { TABLES, INV } from '@/lib/silk/schema';
 import { usd, num, str, linkIds, selectName, nameMap, fieldChoices } from '@/lib/silk/cells';
+
+// Shared grid template for the desktop list — used by both the column header and each InvRow.
+const INV_GRID = 'minmax(120px, 1.4fr) 1.1fr 1fr 0.9fr 0.8fr 120px';
 
 function uniqueSorted(records: RecordModel[], pick: (r: RecordModel) => string): string[] {
     const s = new Set<string>();
@@ -128,6 +131,7 @@ function Inventory() {
                 </div>
             ) : (
                 <div style={{ ...glass(), padding: '4px', display: 'flex', flexDirection: 'column' }}>
+                    {!isNarrow && <ColumnHeader gridCols={INV_GRID} cols={[{ label: 'Item' }, { label: 'Tracking Locations' }, { label: 'Vendor' }, { label: 'Department' }, { label: 'Type' }, { label: 'Unit Price', right: true }]} />}
                     {rows.map((r, i) => (
                         <InvRow key={r.id} rec={r} last={i === rows.length - 1} table={invTable} isNarrow={isNarrow}
                             vendors={vendors} locations={locations} vendorNames={vendorNames} locationNames={locationNames}
@@ -205,7 +209,7 @@ function InvRow({
         return (
             <div {...shared}
                 style={{
-                    display: 'grid', gridTemplateColumns: 'minmax(120px, 1.4fr) 1.1fr 1fr 0.9fr 0.8fr 120px',
+                    display: 'grid', gridTemplateColumns: INV_GRID,
                     alignItems: 'center', gap: '10px', padding: '8px 14px',
                     borderRadius: 'var(--radius-sm)', cursor: 'pointer',
                     position: 'relative', zIndex: openCount > 0 ? 5 : 'auto',
