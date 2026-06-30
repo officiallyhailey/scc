@@ -8,7 +8,7 @@ import {
     ListIcon, XIcon, HouseIcon, QuestionIcon,
     UploadSimpleIcon, ReceiptIcon, PackageIcon, ChartLineUpIcon, ChartBarIcon,
 } from '@phosphor-icons/react';
-import { useIsNarrow } from '@/lib/useIsNarrow';
+import { useIsNarrow, useMounted } from '@/lib/useIsNarrow';
 import { WeeklyLoop } from '@/lib/components/WeeklyLoop';
 
 export const NAV_HEIGHT = 60;
@@ -29,11 +29,15 @@ function isActive(pathname: string, href: string): boolean {
 export function TopNav() {
     const pathname = usePathname() ?? '/';
     const isNarrow = useIsNarrow();
+    const mounted = useMounted();
     const [open, setOpen] = useState(false);
     const [help, setHelp] = useState(false);
-    const [mounted, setMounted] = useState(false);
-    useEffect(() => { setMounted(true); }, []);
     useEffect(() => { setOpen(false); }, [pathname]);
+
+    // Until mounted, render a breakpoint-neutral nav (logo + help). After mount the layout
+    // effect has run (before paint), so the correct desktop/mobile nav swaps in with no flash.
+    const showWide = mounted && !isNarrow;
+    const showNarrow = mounted && isNarrow;
 
     // Only one of { menu, help } may be open at a time.
     const openMenu = () => { setHelp(false); setOpen(o => !o); };
@@ -100,7 +104,7 @@ export function TopNav() {
             <header style={{
                 height: `${NAV_HEIGHT}px`, flexShrink: 0, position: 'sticky', top: 0, zIndex: 1200,
                 display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                padding: isNarrow ? '0 14px' : '0 22px',
+                padding: showNarrow ? '0 14px' : '0 22px', transition: 'padding .18s ease',
                 background: 'var(--glass-bg-strong)',
                 backdropFilter: 'blur(var(--glass-blur)) saturate(150%)',
                 WebkitBackdropFilter: 'blur(var(--glass-blur)) saturate(150%)',
@@ -109,7 +113,7 @@ export function TopNav() {
                 {logo}
 
                 {/* Desktop / tablet: centered icon nav */}
-                {!isNarrow && (
+                {showWide && (
                     <nav style={{ position: 'absolute', left: '50%', transform: 'translateX(-50%)', display: 'flex', alignItems: 'center', gap: '4px' }}>
                         {LINKS.map(link => {
                             const active = isActive(pathname, link.href);
@@ -124,8 +128,8 @@ export function TopNav() {
                     </nav>
                 )}
 
-                {/* Right side */}
-                {isNarrow ? (
+                {/* Right side — neutral (just help) until mounted, then hamburger on mobile */}
+                {showNarrow ? (
                     <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                         {helpBtn}
                         <button aria-label={open ? 'Close menu' : 'Open menu'} onClick={openMenu}
@@ -138,7 +142,7 @@ export function TopNav() {
                 )}
             </header>
 
-            {mounted && isNarrow && open && createPortal(menu, document.body)}
+            {showNarrow && open && createPortal(menu, document.body)}
             {mounted && help && createPortal(<WeeklyLoop onClose={() => setHelp(false)} />, document.body)}
         </>
     );

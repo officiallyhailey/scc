@@ -10,7 +10,7 @@ import {
 } from '@phosphor-icons/react';
 import { Shell } from '@/lib/components/Shell';
 import { glass, DISPLAY, MONO, PALETTE } from '@/lib/components/ui';
-import { useIsNarrow } from '@/lib/useIsNarrow';
+import { useIsNarrow, useMounted } from '@/lib/useIsNarrow';
 
 const SECTIONS = [
     { href: '/upload', n: '01', label: 'Upload', desc: 'Drop in invoices, receipts and statements — Claude files the line items as draft expenses.', Icon: UploadSimpleIcon, gold: true },
@@ -23,7 +23,10 @@ const SECTIONS = [
 const MARQUEE = ['Expenses', 'Sales', 'Inventory', 'Scorecard', 'Silk City'];
 
 export default function Home() {
-    const isNarrow = useIsNarrow();
+    // Guard against SSR mismatch: stay desktop until mounted (the layout effect commits
+    // the correct value before paint), so the landing doesn't flash desktop→mobile.
+    const mounted = useMounted();
+    const isNarrow = useIsNarrow() && mounted;
 
     return (
         <Shell>
