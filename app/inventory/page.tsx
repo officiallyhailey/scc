@@ -92,7 +92,7 @@ function Inventory() {
                     <div style={{ fontFamily: MONO, fontSize: '11px', fontWeight: 700, letterSpacing: '0.14em', textTransform: 'uppercase', color: 'var(--text-muted)' }}>// Inventory</div>
                     <h1 style={{ fontFamily: DISPLAY, fontSize: isNarrow ? '34px' : '44px', textTransform: 'uppercase', letterSpacing: '0.02em', margin: '6px 0 0', color: 'var(--text-primary)' }}>The Pantry</h1>
                 </div>
-                <Button onClick={() => setForm({})}><PlusIcon size={16} weight="bold" /> New item</Button>
+                <Button onClick={() => setForm({})} title="New item"><PlusIcon size={18} weight="bold" /></Button>
             </div>
 
             {/* filters */}

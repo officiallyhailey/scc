@@ -9,7 +9,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
     MagnifyingGlassIcon, XIcon, ReceiptIcon, FloppyDiskIcon, CheckCircleIcon,
-    PaperclipIcon, PlusIcon, PackageIcon,
+    PaperclipIcon, PlusIcon, PackageIcon, TrashIcon, WarningIcon,
 } from '@phosphor-icons/react';
 import { Shell } from '@/lib/components/Shell';
 import { AirtableBoundary, useBase, useRecords } from '@/lib/airtable/hooks';
@@ -101,10 +101,10 @@ function Expenses() {
     const rows = useMemo(() => {
         const needle = q.trim().toLowerCase();
         return expenses
-            .filter(r => week === 'all' || str(r, EX.weekOf) === week)
-            .filter(r => vendor === 'all' || linkIds(r, EX.vendors).includes(vendor))
-            .filter(r => loc === 'all' || linkIds(r, EX.locations).includes(loc))
-            .filter(r => dept === 'all' || selectNames(r, EX.category).includes(dept))
+            .filter(r => week === 'all' || (week === '__none__' ? !str(r, EX.weekOf) : str(r, EX.weekOf) === week))
+            .filter(r => vendor === 'all' || (vendor === '__none__' ? linkIds(r, EX.vendors).length === 0 : linkIds(r, EX.vendors).includes(vendor)))
+            .filter(r => loc === 'all' || (loc === '__none__' ? linkIds(r, EX.locations).length === 0 : linkIds(r, EX.locations).includes(loc)))
+            .filter(r => dept === 'all' || (dept === '__none__' ? selectNames(r, EX.category).length === 0 : selectNames(r, EX.category).includes(dept)))
             .filter(r => {
                 if (invFilter === 'all') return true;
                 const ids = linkIds(r, EX.inventory);
@@ -139,7 +139,7 @@ function Expenses() {
                         <div style={{ fontFamily: MONO, fontSize: '10px', letterSpacing: '0.12em', textTransform: 'uppercase', color: 'var(--text-muted)' }}>{rows.length} shown</div>
                         <div style={{ fontFamily: DISPLAY, fontSize: '24px', color: 'var(--text-primary)' }}>{usd(total)}</div>
                     </div>
-                    <Button onClick={() => setCreating(true)}><PlusIcon size={16} weight="bold" /> New expense</Button>
+                    <Button onClick={() => setCreating(true)} title="New expense"><PlusIcon size={18} weight="bold" /></Button>
                 </div>
             </div>
 
@@ -149,10 +149,10 @@ function Expenses() {
                     <MagnifyingGlassIcon size={16} weight="bold" style={{ position: 'absolute', left: '11px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
                     <input value={q} onChange={e => setQ(e.target.value)} placeholder="Search…" style={{ ...inputStyle, paddingLeft: '34px' }} />
                 </div>
-                <FilterSelect value={week} onChange={setWeek} allLabel="All weeks" options={weeks.map(w => ({ value: w, label: w }))} />
-                <FilterSelect value={vendor} onChange={setVendor} allLabel="All vendors" options={vendorOptions.map(v => ({ value: v.id, label: v.name }))} />
-                <FilterSelect value={loc} onChange={setLoc} allLabel="All locations" options={locations.map(l => ({ value: l.id, label: l.name || '(loc)' }))} />
-                <FilterSelect value={dept} onChange={setDept} allLabel="All departments" options={deptOptions.map(d => ({ value: d, label: d }))} />
+                <FilterSelect value={week} onChange={setWeek} allLabel="All weeks" options={[{ value: '__none__', label: '— No week —' }, ...weeks.map(w => ({ value: w, label: w }))]} />
+                <FilterSelect value={vendor} onChange={setVendor} allLabel="All vendors" options={[{ value: '__none__', label: '— No vendor —' }, ...vendorOptions.map(v => ({ value: v.id, label: v.name }))]} />
+                <FilterSelect value={loc} onChange={setLoc} allLabel="All locations" options={[{ value: '__none__', label: '— No location —' }, ...locations.map(l => ({ value: l.id, label: l.name || '(loc)' }))]} />
+                <FilterSelect value={dept} onChange={setDept} allLabel="All departments" options={[{ value: '__none__', label: '— No category —' }, ...deptOptions.map(d => ({ value: d, label: d }))]} />
                 <FilterSelect value={invFilter} onChange={setInvFilter} allLabel="All inventory items"
                     options={[{ value: '__none__', label: '— No inventory item —' }, ...inventoryOptions.map(o => ({ value: o.id, label: o.name }))]} />
             </div>
@@ -292,7 +292,20 @@ function DetailDrawer({
     const [saved, setSaved] = useState(false);
     const [err, setErr] = useState('');
     const [showInvForm, setShowInvForm] = useState(false);
+    const [confirmDel, setConfirmDel] = useState(false); // two-step delete guard
     const set = <K extends keyof Draft>(k: K, v: Draft[K]) => { setD(p => ({ ...p, [k]: v })); setSaved(false); };
+
+    async function del() {
+        if (!rec) return;
+        setBusy(true); setErr('');
+        try {
+            await table.deleteRecordAsync(rec);
+            onClose();
+        } catch (e) {
+            setErr(e instanceof Error ? e.message : 'Delete failed.');
+            setBusy(false); setConfirmDel(false);
+        }
+    }
 
     const receipt = rec ? ((rec.getCellValue(EX.receipt) as { url?: string; thumbnails?: { large?: { url: string } }; filename?: string; type?: string }[] | null) ?? []) : [];
 
@@ -399,11 +412,35 @@ function DetailDrawer({
                 {err && <div style={{ color: PALETTE.rust, fontSize: '13px', fontWeight: 600 }}>{err}</div>}
 
                 {/* sticky footer */}
-                <div style={{ position: 'sticky', bottom: 0, paddingTop: '8px', display: 'flex', gap: '10px', alignItems: 'center', background: 'linear-gradient(transparent, var(--glass-bg-strong) 40%)' }}>
-                    <Button onClick={save} disabled={busy} style={{ flex: 1 }}>
-                        {busy ? 'Saving…' : saved ? <><CheckCircleIcon size={16} weight="fill" /> Saved</> : <><FloppyDiskIcon size={16} weight="bold" /> {rec ? 'Save changes' : 'Create expense'}</>}
-                    </Button>
-                    <Button variant="ghost" onClick={onClose}>{rec ? 'Close' : 'Cancel'}</Button>
+                <div style={{ position: 'sticky', bottom: 0, paddingTop: '8px', background: 'linear-gradient(transparent, var(--glass-bg-strong) 40%)' }}>
+                    {confirmDel ? (
+                        // Two-step confirm: nothing is deleted until "Yes, delete" is clicked.
+                        <div style={{ ...glass({ soft: true }), padding: '12px 14px', border: `1px solid var(--accent-2)`, display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                            <span style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13.5px', fontWeight: 700, color: 'var(--text-primary)' }}>
+                                <WarningIcon size={17} weight="fill" color={PALETTE.rust} /> Delete this expense permanently?
+                            </span>
+                            <span style={{ fontSize: '12.5px', color: 'var(--text-muted)' }}>This removes the record from Airtable and can’t be undone.</span>
+                            <div style={{ display: 'flex', gap: '10px' }}>
+                                <Button onClick={del} disabled={busy} style={{ flex: 1, background: PALETTE.rust, color: '#fff' }}>
+                                    {busy ? 'Deleting…' : <><TrashIcon size={16} weight="bold" /> Yes, delete</>}
+                                </Button>
+                                <Button variant="ghost" onClick={() => setConfirmDel(false)} disabled={busy}>Cancel</Button>
+                            </div>
+                        </div>
+                    ) : (
+                        <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+                            <Button onClick={save} disabled={busy} style={{ flex: 1 }}>
+                                {busy ? 'Saving…' : saved ? <><CheckCircleIcon size={16} weight="fill" /> Saved</> : <><FloppyDiskIcon size={16} weight="bold" /> {rec ? 'Save changes' : 'Create expense'}</>}
+                            </Button>
+                            <Button variant="ghost" onClick={onClose}>{rec ? 'Close' : 'Cancel'}</Button>
+                            {rec && (
+                                <button onClick={() => setConfirmDel(true)} disabled={busy} aria-label="Delete expense" title="Delete expense"
+                                    style={{ width: '42px', height: '42px', flexShrink: 0, borderRadius: 'var(--radius-sm)', border: '1px solid var(--glass-border)', background: 'var(--glass-bg)', color: PALETTE.rust, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                                    <TrashIcon size={18} weight="bold" />
+                                </button>
+                            )}
+                        </div>
+                    )}
                 </div>
             </div>
 

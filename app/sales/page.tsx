@@ -118,7 +118,7 @@ function Sales() {
                         <div style={{ fontFamily: MONO, fontSize: '10px', letterSpacing: '0.12em', textTransform: 'uppercase', color: 'var(--text-muted)' }}>{rows.length} shown</div>
                         <div style={{ fontFamily: DISPLAY, fontSize: '24px', color: 'var(--text-primary)' }}>{usd(total)}</div>
                     </div>
-                    <Button onClick={() => setCreating(true)}><PlusIcon size={16} weight="bold" /> New sale</Button>
+                    <Button onClick={() => setCreating(true)} title="New sale"><PlusIcon size={18} weight="bold" /></Button>
                 </div>
             </div>
 

@@ -100,10 +100,11 @@ export function MoneyInput({ value, onChange, style }: { value: string; onChange
 
 /** Primary / ghost button. */
 export function Button({
-    children, onClick, variant = 'primary', disabled, type = 'button', style,
+    children, onClick, variant = 'primary', disabled, type = 'button', style, title, ariaLabel,
 }: {
     children: React.ReactNode; onClick?: () => void; variant?: 'primary' | 'ghost' | 'rust';
     disabled?: boolean; type?: 'button' | 'submit'; style?: React.CSSProperties;
+    title?: string; ariaLabel?: string;
 }) {
     const base: React.CSSProperties = {
         padding: '10px 18px', borderRadius: 'var(--radius-sm)', cursor: disabled ? 'not-allowed' : 'pointer',
@@ -117,7 +118,7 @@ export function Button({
         ghost: { background: 'var(--glass-bg)', color: 'var(--text-primary)', border: '1px solid var(--glass-border)' },
     };
     return (
-        <button type={type} onClick={onClick} disabled={disabled}
+        <button type={type} onClick={onClick} disabled={disabled} title={title} aria-label={ariaLabel ?? title}
             style={{ ...base, ...variants[variant], ...style }}
             onMouseEnter={e => { if (!disabled) e.currentTarget.style.filter = 'brightness(1.06)'; }}
             onMouseLeave={e => { e.currentTarget.style.filter = 'none'; }}
