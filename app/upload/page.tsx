@@ -5,9 +5,11 @@
 //     then the client auto-creates Expense rows (location detected from the document).
 //   • Sales   → a Square CSV is parsed deterministically in-browser (lib/silk/csv), week read
 //     from the filename; one Sales row per line for the chosen location.
-//   • Payroll → disabled placeholder (still run via the report skill).
-// Both active flows auto-write, then show a flag summary (the human checkpoint happens on the
-// list pages). Nothing here parses payroll.
+//   • Payroll → a structured multi-step wizard (PayrollWizard.tsx) — deterministic parsing of
+//     Homebase timesheets + Square tips (lib/silk/payroll.ts), a roster-match/anomaly review,
+//     then an in-app editable pivot with its own approval gate before the Payroll-table write.
+// Expense/Sales auto-write then show a flag summary (the human checkpoint happens on the list
+// pages); Payroll's checkpoints are built into its own wizard steps instead.
 
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
@@ -22,6 +24,7 @@ import { useIsNarrow } from '@/lib/useIsNarrow';
 import { glass, Button, Pill, DISPLAY, MONO, BODY, PALETTE, inputStyle } from '@/lib/components/ui';
 import { TABLES, EX, SALE } from '@/lib/silk/schema';
 import { parseCsv, toRecords, field, money, sundayFromFilename } from '@/lib/silk/csv';
+import { PayrollWizard } from './PayrollWizard';
 
 type ReportType = 'expense' | 'sales' | 'payroll';
 
@@ -83,7 +86,7 @@ function fileToText(file: File): Promise<string> {
 const TYPES: { id: ReportType; label: string; Icon: typeof ReceiptIcon; disabled?: boolean }[] = [
     { id: 'expense', label: 'Expense', Icon: ReceiptIcon },
     { id: 'sales', label: 'Sales', Icon: ChartLineUpIcon },
-    { id: 'payroll', label: 'Payroll', Icon: UsersThreeIcon, disabled: true },
+    { id: 'payroll', label: 'Payroll', Icon: UsersThreeIcon },
 ];
 
 function Uploader() {
@@ -267,7 +270,7 @@ function Uploader() {
     const accept = type === 'sales' ? '.csv,text/csv' : '.pdf,.csv,image/*,application/pdf,text/csv';
     // Sales rows need a location each — set per file in the list below.
     const salesNeedsLoc = type === 'sales' && files.some(f => !f.locId);
-    const canRun = files.length > 0 && !running && type !== 'payroll' && !salesNeedsLoc;
+    const canRun = files.length > 0 && !running && !salesNeedsLoc;
     // Live run tallies (derived from the per-file state the run loop updates — no extra cost).
     const createdSoFar = files.reduce((s, f) => s + f.created, 0);
     const filesDone = files.filter(f => f.status === 'done' || f.status === 'error').length;
@@ -291,12 +294,7 @@ function Uploader() {
             </div>
 
             {type === 'payroll' ? (
-                <div style={{ ...glass(), padding: '22px' }}>
-                    <div style={{ fontFamily: DISPLAY, fontSize: '22px', color: 'var(--text-primary)', textTransform: 'uppercase' }}>Payroll — coming soon</div>
-                    <p style={{ fontSize: '14px', color: 'var(--text-muted)', lineHeight: 1.55, marginBottom: 0 }}>
-                        Payroll is a multi-step flow (4 CSVs → Tips + Time Sheets, a review gate for new hires / 40-hr OT / duplicates, a 763/869 pivot to approve, then the Payroll table). It&apos;s being built as its own page — for now, run payroll through the report skill.
-                    </p>
-                </div>
+                <PayrollWizard />
             ) : (
                 <>
                     <p style={{ fontSize: '15px', color: 'var(--text-muted)', margin: '0 0 18px', lineHeight: 1.55 }}>{copy}</p>

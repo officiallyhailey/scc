@@ -79,7 +79,8 @@ app/
   page.tsx                Landing hub (marquee hero + a card per nav section)
   login/page.tsx          Password gate UI (the only unauthenticated page)
 
-  upload/page.tsx         Ingestion: Expense (Claude) | Sales (CSV) | Payroll (disabled)
+  upload/page.tsx         Ingestion: Expense (Claude) | Sales (CSV) | Payroll (wizard)
+  upload/PayrollWizard.tsx  Payroll's multi-step review wizard (roster match, anomalies, pivot approval)
   expenses/page.tsx       Expense list + detail drawer (edit/create)
   sales/page.tsx          Sales list + detail drawer (edit/create, link product)
   inventory/page.tsx      Inventory ("The Pantry") list + create/edit form
@@ -204,10 +205,19 @@ Rules encoded in `schema.ts` and the scorecard:
   - **Sales** → a Square `item-sales-summary` CSV is parsed **deterministically in the
     browser** (`lib/silk/csv.ts`), with the week's Sunday read from the filename; you pick
     the location; one Sales row per line.
-  - **Payroll** → disabled ("coming soon"); still run via the skill.
-  - Both write paths **auto-create then surface a flag summary** (new vendors, unknown card,
+  - **Payroll** → `PayrollWizard.tsx`, a structured multi-step wizard (no chat, no Google
+    Sheets dependency): parses 2 Homebase timesheet + 2 Square tips CSVs deterministically
+    (`lib/silk/payroll.ts`, no Claude call), a roster-match step (unmatched Homebase names
+    link-or-create against Staff Payroll, mirroring the Vendor "+Add" pattern), an anomaly
+    review (zero-hours-despite-scheduled, possible duplicate shifts), then writes Tips + Time
+    Sheets — followed by an in-app **editable pivot** (with a reconciliation panel reading
+    back what Airtable's own formulas computed, and a standalone CSV download for the payroll
+    provider) gated behind an explicit **"Approve & upload"** before the final Payroll-table
+    write. The wizard never computes wages (handled elsewhere via Staff Payroll's Rate
+    fields) or overtime (tracked on another platform) — both are passed through/left blank.
+  - Expense/Sales **auto-create then surface a flag summary** (new vendors, unknown card,
     uncategorized rows, "needs product link") — the human checkpoint happens on the list
-    pages, not in a blocking modal.
+    pages, not in a blocking modal. Payroll's checkpoints are its own wizard steps instead.
 - **`/expenses`, `/sales`, `/inventory`** — list + glass **detail drawer** that edits *or*
   creates a record (drawers take an optional `rec`; absent = create). Searchable filters,
   link pickers (vendor/inventory/product/location), `$`-prefixed money inputs.
@@ -280,8 +290,7 @@ Scripts: `npm run dev`, `npm run build`, `npm start`.
 
 ## 12. What's intentionally not here yet
 
-- **Payroll ingestion** — the heaviest skill (4 CSVs → Tips/Time Sheets, a review gate, a
-  763/869 pivot to approve, then the Payroll table). The Upload selector reserves a disabled
-  slot for it.
+- **A `/payroll` list page** — the Payroll wizard writes real records, but there's no page yet
+  to browse/edit them afterward (Expenses/Sales/Inventory all have one). A natural next build.
 - **Server-side sliding sessions** — the idle timeout is enforced client-side (standard for
   a single-password internal tool); the cookie's own max-age is 30 days.
