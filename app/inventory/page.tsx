@@ -11,11 +11,11 @@ import { AirtableBoundary, useBase, useRecords } from '@/lib/airtable/hooks';
 import type { RecordModel, TableModel } from '@/lib/airtable/models';
 import { useIsNarrow } from '@/lib/useIsNarrow';
 import { glass, Button, DISPLAY, MONO, inputStyle, PALETTE } from '@/lib/components/ui';
-import { InlineLink, InlineSelect, InlineMultiLink, ColumnHeader } from '@/lib/components/fields';
+import { InlineLink, InlineSelect, InlineMultiLink, ColumnHeader, MultiFilter } from '@/lib/components/fields';
 import { InventoryForm } from '@/lib/components/InventoryForm';
 import { TABLES, INV } from '@/lib/silk/schema';
 import { usd, num, str, linkIds, selectName, nameMap, fieldChoices } from '@/lib/silk/cells';
-import { buildFlagMap } from '@/lib/silk/history';
+import { buildFlagMap, type FlagInfo } from '@/lib/silk/history';
 
 // Shared grid template for the desktop list — used by both the column header and each InvRow.
 const INV_GRID = 'minmax(120px, 1.4fr) 1.1fr 1fr 0.9fr 0.8fr 120px';
@@ -24,6 +24,13 @@ function uniqueSorted(records: RecordModel[], pick: (r: RecordModel) => string):
     const s = new Set<string>();
     for (const r of records) { const v = pick(r); if (v) s.add(v); }
     return Array.from(s).sort();
+}
+
+// A field's filter passes when nothing is selected (= all) or the row matches at least
+// one selected token; '__none__' matches rows where the field is blank.
+function matchMulti(selected: string[], rowVals: string[]): boolean {
+    if (selected.length === 0) return true;
+    return selected.some(s => (s === '__none__' ? rowVals.length === 0 : rowVals.includes(s)));
 }
 
 export default function InventoryPage() {
@@ -62,10 +69,10 @@ function Inventory() {
     const flagByItem = useMemo(() => buildFlagMap(expenses, inv), [expenses, inv]);
 
     const [q, setQ] = useState('');
-    const [loc, setLoc] = useState('all');
-    const [dept, setDept] = useState('all');
-    const [type, setType] = useState('all');
-    const [vendor, setVendor] = useState('all');
+    const [loc, setLoc] = useState<string[]>([]);
+    const [dept, setDept] = useState<string[]>([]);
+    const [type, setType] = useState<string[]>([]);
+    const [vendor, setVendor] = useState<string[]>([]);
     const [flag, setFlag] = useState('all'); // 'all' | 'flagged' | 'clear'
     const [sort, setSort] = useState<'item' | 'price' | 'created' | 'jump'>('item');
     const [form, setForm] = useState<null | { recordId?: string }>(null);
@@ -81,10 +88,10 @@ function Inventory() {
     const rows = useMemo(() => {
         const needle = q.trim().toLowerCase();
         const filtered = inv
-            .filter(r => loc === 'all' || linkIds(r, INV.trackingLocations).includes(loc))
-            .filter(r => dept === 'all' || selectName(r, INV.department) === dept)
-            .filter(r => type === 'all' || selectName(r, INV.type) === type)
-            .filter(r => vendor === 'all' || linkIds(r, INV.vendor).includes(vendor))
+            .filter(r => matchMulti(loc, linkIds(r, INV.trackingLocations)))
+            .filter(r => matchMulti(dept, [selectName(r, INV.department)].filter(Boolean)))
+            .filter(r => matchMulti(type, [selectName(r, INV.type)].filter(Boolean)))
+            .filter(r => matchMulti(vendor, linkIds(r, INV.vendor)))
             .filter(r => flag === 'all' || (flag === 'flagged' ? !!flagByItem.get(r.id)?.flagged : !flagByItem.get(r.id)?.flagged))
             .filter(r => {
                 if (!needle) return true;
@@ -120,10 +127,10 @@ function Inventory() {
                     <MagnifyingGlassIcon size={16} weight="bold" style={{ position: 'absolute', left: '11px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
                     <input value={q} onChange={e => setQ(e.target.value)} placeholder="Search items, vendors…" style={{ ...inputStyle, paddingLeft: '34px' }} />
                 </div>
-                <Sel block={isNarrow} value={loc} onChange={setLoc} all="All locations" opts={locations.map(l => ({ value: l.id, label: l.name || '(loc)' }))} />
-                <Sel block={isNarrow} value={dept} onChange={setDept} all="All departments" opts={depts.map(d => ({ value: d, label: d }))} />
-                <Sel block={isNarrow} value={type} onChange={setType} all="All types" opts={types.map(t => ({ value: t, label: t }))} />
-                <Sel block={isNarrow} value={vendor} onChange={setVendor} all="All vendors" opts={vendorOptions.map(v => ({ value: v.id, label: v.name }))} />
+                <MultiFilter block={isNarrow} value={loc} onChange={setLoc} allLabel="All locations" options={[{ value: '__none__', label: '— No location —' }, ...locations.map(l => ({ value: l.id, label: l.name || '(loc)' }))]} />
+                <MultiFilter block={isNarrow} value={dept} onChange={setDept} allLabel="All departments" options={[{ value: '__none__', label: '— No department —' }, ...depts.map(d => ({ value: d, label: d }))]} />
+                <MultiFilter block={isNarrow} value={type} onChange={setType} allLabel="All types" options={[{ value: '__none__', label: '— No type —' }, ...types.map(t => ({ value: t, label: t }))]} />
+                <MultiFilter block={isNarrow} value={vendor} onChange={setVendor} allLabel="All vendors" searchable options={[{ value: '__none__', label: '— No vendor —' }, ...vendorOptions.map(v => ({ value: v.id, label: v.name }))]} />
                 <Sel block={isNarrow} value={flag} onChange={setFlag} all="All price flags" opts={[{ value: 'flagged', label: '⚠ Price jumps only' }, { value: 'clear', label: 'No recent jump' }]} />
                 <select value={sort} onChange={e => setSort(e.target.value as 'item' | 'price' | 'created' | 'jump')} style={{ ...inputStyle, width: isNarrow ? '100%' : 'auto', flex: isNarrow ? '1 1 auto' : '0 0 auto' }} title="Sort by">
                     <option value="item">Sort: Item</option>
@@ -137,8 +144,11 @@ function Inventory() {
             {rows.length === 0 ? (
                 <div style={{ ...glass({ soft: true }), padding: '50px 20px', textAlign: 'center', color: 'var(--text-muted)' }}>
                     <PackageIcon size={34} weight="duotone" />
-                    <div style={{ marginTop: '10px', fontSize: '14px' }}>No inventory items match.</div>
+                    <div style={{ marginTop: '10px', fontSize: '14px' }}>{flag === 'flagged' ? 'No price jumps in the current filters.' : 'No inventory items match.'}</div>
                 </div>
+            ) : flag === 'flagged' ? (
+                <PriceComparison rows={rows} flagByItem={flagByItem} vendorNames={vendorNames} isNarrow={isNarrow}
+                    onOpen={id => setForm({ recordId: id })} />
             ) : (
                 <div style={{ ...glass(), padding: '4px', display: 'flex', flexDirection: 'column' }}>
                     {!isNarrow && <ColumnHeader gridCols={INV_GRID} cols={[{ label: 'Item' }, { label: 'Tracking Locations' }, { label: 'Vendor' }, { label: 'Department' }, { label: 'Type' }, { label: 'Unit Price', right: true }]} />}
@@ -165,6 +175,117 @@ function Sel({ value, onChange, all, opts, block }: { value: string; onChange: (
             {opts.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
         </select>
     );
+}
+
+// Grid template for the price-comparison report — header + each ComparisonRow.
+const CMP_GRID = 'minmax(130px, 1.5fr) 1.1fr 0.85fr 0.8fr 84px 96px 82px';
+
+/**
+ * Report view shown when the "Price jumps only" filter is active. Instead of the editable
+ * inventory grid it lays out a screenshot-friendly price comparison — the price that drove
+ * the flag, the item's listed Unit Price, the % increase, plus Vendor / Department / Type —
+ * sorted biggest jump first, so it can be dropped into an email to a vendor.
+ */
+function PriceComparison({
+    rows, flagByItem, vendorNames, isNarrow, onOpen,
+}: {
+    rows: RecordModel[]; flagByItem: Map<string, FlagInfo>; vendorNames: Map<string, string>;
+    isNarrow: boolean; onOpen: (id: string) => void;
+}) {
+    // Report leads with the biggest increases regardless of the page's own sort control.
+    const ranked = useMemo(
+        () => [...rows].sort((a, b) => (flagByItem.get(b.id)?.latestDelta ?? 0) - (flagByItem.get(a.id)?.latestDelta ?? 0)),
+        [rows, flagByItem],
+    );
+
+    return (
+        <div style={{ ...glass(), padding: isNarrow ? '14px' : '16px 18px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+            <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: '10px', flexWrap: 'wrap' }}>
+                <div>
+                    <div style={{ fontFamily: MONO, fontSize: '10px', fontWeight: 700, letterSpacing: '0.12em', textTransform: 'uppercase', color: 'var(--text-muted)' }}>// Price comparison</div>
+                    <div style={{ fontFamily: DISPLAY, fontSize: isNarrow ? '22px' : '26px', color: 'var(--text-primary)', marginTop: '2px' }}>
+                        {ranked.length} price {ranked.length === 1 ? 'increase' : 'increases'} flagged
+                    </div>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', color: 'var(--text-muted)' }}>
+                    <TrendUpIcon size={14} weight="bold" color={PALETTE.rust} /> Latest paid vs listed unit price
+                </div>
+            </div>
+
+            <div style={{ ...glass({ soft: true }), padding: '4px' }}>
+                {!isNarrow && (
+                    <ColumnHeader gridCols={CMP_GRID} cols={[
+                        { label: 'Item' }, { label: 'Vendor' }, { label: 'Department' }, { label: 'Type' },
+                        { label: 'Listed', right: true }, { label: 'Paid', right: true }, { label: 'Increase', right: true },
+                    ]} />
+                )}
+                {ranked.map((r, i) => (
+                    <ComparisonRow key={r.id} rec={r} flag={flagByItem.get(r.id)} vendorNames={vendorNames}
+                        last={i === ranked.length - 1} isNarrow={isNarrow} onOpen={() => onOpen(r.id)} />
+                ))}
+            </div>
+        </div>
+    );
+}
+
+function ComparisonRow({
+    rec, flag, vendorNames, last, isNarrow, onOpen,
+}: {
+    rec: RecordModel; flag?: FlagInfo; vendorNames: Map<string, string>;
+    last: boolean; isNarrow: boolean; onOpen: () => void;
+}) {
+    const name = str(rec, INV.name) || rec.name || '(unnamed)';
+    const vendor = linkIds(rec, INV.vendor).map(id => vendorNames.get(id) ?? '').filter(Boolean).join(', ') || '—';
+    const dept = selectName(rec, INV.department) || '—';
+    const type = selectName(rec, INV.type) || '—';
+    const listed = num(rec, INV.unitPrice);
+    const paid = flag?.latestUnit ?? 0;
+    const pct = flag ? Math.round(flag.latestDelta * 100) : 0;
+
+    const pctPill = (
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: '3px', fontSize: '11px', fontWeight: 700, color: PALETTE.rust, background: 'rgba(181,138,58,0.16)', padding: '2px 8px', borderRadius: '999px' }}>
+            <TrendUpIcon size={11} weight="bold" /> +{pct}%
+        </span>
+    );
+    const shared = {
+        onClick: onOpen,
+        onMouseEnter: (e: React.MouseEvent<HTMLDivElement>) => { e.currentTarget.style.background = 'var(--glass-bg-soft)'; },
+        onMouseLeave: (e: React.MouseEvent<HTMLDivElement>) => { e.currentTarget.style.background = 'transparent'; },
+    };
+
+    if (!isNarrow) {
+        return (
+            <div {...shared} style={{ display: 'grid', gridTemplateColumns: CMP_GRID, alignItems: 'center', gap: '10px', padding: '10px 14px', borderRadius: 'var(--radius-sm)', cursor: 'pointer', borderBottom: last ? 'none' : '1px solid var(--hairline)' }}>
+                <span title={name} style={{ fontWeight: 700, fontSize: '14px', color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{name}</span>
+                <span title={vendor} style={{ fontSize: '12.5px', color: 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{vendor}</span>
+                <span style={{ fontSize: '12.5px', color: 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{dept}</span>
+                <span style={{ fontSize: '12.5px', color: 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{type}</span>
+                <span style={{ textAlign: 'right', fontSize: '13px', color: 'var(--text-muted)', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>{listed ? usd(listed) : '—'}</span>
+                <span style={{ textAlign: 'right', fontFamily: DISPLAY, fontSize: '16px', color: PALETTE.rust, fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>{paid ? usd(paid) : '—'}</span>
+                <span style={{ textAlign: 'right' }}>{pctPill}</span>
+            </div>
+        );
+    }
+
+    return (
+        <div {...shared} style={{ display: 'flex', flexDirection: 'column', gap: '8px', padding: '12px 14px', borderRadius: 'var(--radius-sm)', cursor: 'pointer', borderBottom: last ? 'none' : '1px solid var(--hairline)' }}>
+            <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '10px' }}>
+                <span style={{ fontWeight: 700, fontSize: '14.5px', color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis' }}>{name}</span>
+                {pctPill}
+            </div>
+            <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>{[vendor, dept, type].filter(v => v && v !== '—').join(' · ') || '—'}</div>
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: '8px', fontVariantNumeric: 'tabular-nums' }}>
+                <span style={{ fontSize: '12.5px', color: 'var(--text-muted)' }}>Listed {listed ? usd(listed) : '—'}</span>
+                <CaretRightMini />
+                <span style={{ fontFamily: DISPLAY, fontSize: '17px', color: PALETTE.rust }}>{paid ? usd(paid) : '—'}</span>
+                <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>paid</span>
+            </div>
+        </div>
+    );
+}
+
+function CaretRightMini() {
+    return <span style={{ color: 'var(--text-muted)', fontSize: '12px' }}>→</span>;
 }
 
 // One inventory row — aligned columns like Expenses/Sales with inline-editable Tracking

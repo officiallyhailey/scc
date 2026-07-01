@@ -108,9 +108,16 @@ export function buildPriceHistory(
  * Compares each item's most recent *priced* purchase to that item's listed Unit Price.
  * Items with no priced purchase or no listed price are omitted (treated as unflagged).
  */
+export type FlagInfo = {
+    flagged: boolean;
+    latestDelta: number;   // normalized % vs the listed price (can be negative)
+    latestUnit: number;    // the purchase unit price that drove the comparison
+    latestDate: string;    // ISO date of that purchase
+};
+
 export function buildFlagMap(
     expenses: RecordModel[], invRecords: RecordModel[],
-): Map<string, { flagged: boolean; latestDelta: number }> {
+): Map<string, FlagInfo> {
     // latest priced purchase per inventory id
     const latest = new Map<string, { date: string; created: string; unitPrice: number }>();
     for (const e of expenses) {
@@ -127,14 +134,14 @@ export function buildFlagMap(
             }
         }
     }
-    const out = new Map<string, { flagged: boolean; latestDelta: number }>();
+    const out = new Map<string, FlagInfo>();
     for (const inv of invRecords) {
         const l = latest.get(inv.id);
         const baseline = num(inv, INV.unitPrice);
         if (!l || baseline <= 0) continue;
         const delta = listedPriceDelta(l.unitPrice, baseline, num(inv, INV.perUnit));
         if (delta == null) continue;
-        out.set(inv.id, { flagged: delta >= PRICE_FLAG_PCT, latestDelta: delta });
+        out.set(inv.id, { flagged: delta >= PRICE_FLAG_PCT, latestDelta: delta, latestUnit: l.unitPrice, latestDate: l.date });
     }
     return out;
 }
