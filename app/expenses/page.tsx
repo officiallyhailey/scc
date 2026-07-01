@@ -6,7 +6,7 @@
 // from lib/components/fields. Writes go straight to Airtable via table.updateRecordAsync /
 // createRecordAsync. Filters/search run client-side over useRecords(Expenses).
 
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
     MagnifyingGlassIcon, XIcon, ReceiptIcon, FloppyDiskIcon, CheckCircleIcon, CircleIcon,
     PaperclipIcon, PlusIcon, TrashIcon, WarningIcon,
@@ -58,6 +58,37 @@ const COG_SECTIONS: { key: string; label: string; locName: string; expCats: Set<
     { key: 'Kitchen', label: 'Kitchen · 763', locName: '763', expCats: new Set(['Kitchen']), salDepts: new Set(['Kitchen']) },
     { key: 'Cafe', label: 'Cafe · 869', locName: '869', expCats: new Set(['Bar', 'Kitchen']), salDepts: new Set(['Bar', 'Retail Coffee', 'Kitchen']) },
 ];
+
+// Horizontal auto-fit: renders its children on a single line and shrinks the font-size
+// (which the children size themselves against, via `em`) until they fit the available width.
+// Re-measures on container resize and whenever `sig` changes. Never wraps.
+function FitOneLine({ children, sig, base = 12.5, min = 7, style }: {
+    children: React.ReactNode; sig: string; base?: number; min?: number; style?: React.CSSProperties;
+}) {
+    const ref = useRef<HTMLDivElement>(null);
+    const [font, setFont] = useState(base);
+    useLayoutEffect(() => {
+        const el = ref.current;
+        if (!el) return;
+        const fit = () => {
+            const prev = el.style.fontSize;
+            el.style.fontSize = `${base}px`;          // measure at full size (content width ∝ font-size)
+            const s = el.scrollWidth, c = el.clientWidth;
+            el.style.fontSize = prev;
+            const next = s > c && c > 0 ? Math.max(min, Math.floor(base * (c / s) * 10) / 10) : base;
+            setFont(f => (f === next ? f : next));
+        };
+        fit();
+        const ro = new ResizeObserver(fit);
+        ro.observe(el);
+        return () => ro.disconnect();
+    }, [sig, base, min]);
+    return (
+        <div ref={ref} style={{ ...style, fontSize: `${font}px`, whiteSpace: 'nowrap' }}>
+            {children}
+        </div>
+    );
+}
 
 export default function ExpensesPage() {
     const [mounted, setMounted] = useState(false);
@@ -177,8 +208,6 @@ function Expenses() {
             .sort((a, b) => weekKey(str(b, EX.weekOf)).localeCompare(weekKey(str(a, EX.weekOf))) || str(b, EX.date).localeCompare(str(a, EX.date)));
     }, [expenses, week, vendor, loc, dept, invFilter, bank, q, vendorNames]);
 
-    const total = useMemo(() => rows.reduce((s, r) => s + num(r, EX.total), 0), [rows]);
-
     // Weekly upload-status: which key vendors have ≥1 invoice in the selected week(s).
     // Only shown when at least one real week is selected (the report is run per week).
     const weekStatus = useMemo(() => {
@@ -277,13 +306,7 @@ function Expenses() {
                     <div style={{ fontFamily: MONO, fontSize: '11px', fontWeight: 700, letterSpacing: '0.14em', textTransform: 'uppercase', color: 'var(--text-muted)' }}>// Expenses</div>
                     <h1 style={{ fontFamily: DISPLAY, fontSize: isNarrow ? '34px' : '44px', textTransform: 'uppercase', letterSpacing: '0.02em', margin: '6px 0 0', color: 'var(--text-primary)' }}>The Ledger</h1>
                 </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                    <div style={{ ...glass({ soft: true }), padding: '10px 16px', textAlign: 'right' }}>
-                        <div style={{ fontFamily: MONO, fontSize: '10px', letterSpacing: '0.12em', textTransform: 'uppercase', color: 'var(--text-muted)' }}>{rows.length} shown</div>
-                        <div style={{ fontFamily: DISPLAY, fontSize: '24px', color: 'var(--text-primary)' }}>{usd(total)}</div>
-                    </div>
-                    <Button onClick={() => setCreating(true)} title="New expense"><PlusIcon size={18} weight="bold" /></Button>
-                </div>
+                <Button onClick={() => setCreating(true)} title="New expense"><PlusIcon size={18} weight="bold" /></Button>
             </div>
 
             {/* Filters (all multi-select): search + Week / Vendor / Location / Department / Inventory / Bank.
@@ -374,17 +397,20 @@ function Expenses() {
                                     </span>
                                 ))}
                             </div>
-                            {/* scorecard COG % per section (Bar/Kitchen/Cafe) */}
+                            {/* scorecard COG % per section (Bar/Kitchen/Cafe) — auto-shrinks to stay on one line */}
                             {wb.cogs.length > 0 && (
-                                <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'baseline', gap: '16px', marginTop: '11px', paddingTop: '10px', borderTop: '1px solid var(--hairline)' }}>
-                                    <span style={{ fontFamily: MONO, fontSize: '10px', fontWeight: 700, letterSpacing: '0.12em', textTransform: 'uppercase', color: 'var(--text-muted)' }}>COG %</span>
+                                <FitOneLine
+                                    sig={wb.cogs.map(s => `${s.key}:${s.cog ?? ''}`).join('|')}
+                                    style={{ display: 'flex', alignItems: 'baseline', gap: '1.28em', marginTop: '11px', paddingTop: '10px', borderTop: '1px solid var(--hairline)', overflow: 'hidden' }}
+                                >
+                                    <span style={{ fontFamily: MONO, fontSize: '0.8em', fontWeight: 700, letterSpacing: '0.12em', textTransform: 'uppercase', color: 'var(--text-muted)', flexShrink: 0 }}>COG %</span>
                                     {wb.cogs.map(s => (
-                                        <span key={s.key} title={`expenses ${usd(s.exp)} ÷ sales ${usd(s.sal)}`} style={{ display: 'inline-flex', alignItems: 'baseline', gap: '6px' }}>
-                                            <span style={{ fontSize: '12.5px', fontWeight: 700, color: 'var(--text-primary)' }}>{s.label}</span>
-                                            <span style={{ fontFamily: DISPLAY, fontSize: '17px', color: s.cog == null ? 'var(--text-muted)' : cogColor(s.cog) }}>{s.cog == null ? '—' : fmtPct(s.cog)}</span>
+                                        <span key={s.key} title={`expenses ${usd(s.exp)} ÷ sales ${usd(s.sal)}`} style={{ display: 'inline-flex', alignItems: 'baseline', gap: '0.48em', flexShrink: 0 }}>
+                                            <span style={{ fontSize: '1em', fontWeight: 700, color: 'var(--text-primary)' }}>{s.label}</span>
+                                            <span style={{ fontFamily: DISPLAY, fontSize: '1.36em', color: s.cog == null ? 'var(--text-muted)' : cogColor(s.cog) }}>{s.cog == null ? '—' : fmtPct(s.cog)}</span>
                                         </span>
                                     ))}
-                                </div>
+                                </FitOneLine>
                             )}
                         </div>
                     ))}

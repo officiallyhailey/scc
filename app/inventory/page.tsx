@@ -5,7 +5,7 @@
 // (the same form the expense drawer pops to add a missing item). Shows the Inventory Name.
 
 import React, { useEffect, useMemo, useState } from 'react';
-import { MagnifyingGlassIcon, PlusIcon, PackageIcon, LinkSimpleIcon, TrendUpIcon } from '@phosphor-icons/react';
+import { MagnifyingGlassIcon, PlusIcon, PackageIcon, LinkSimpleIcon, TrendUpIcon, XIcon } from '@phosphor-icons/react';
 import { Shell } from '@/lib/components/Shell';
 import { AirtableBoundary, useBase, useRecords } from '@/lib/airtable/hooks';
 import type { RecordModel, TableModel } from '@/lib/airtable/models';
@@ -16,6 +16,7 @@ import { InventoryForm } from '@/lib/components/InventoryForm';
 import { TABLES, INV } from '@/lib/silk/schema';
 import { usd, num, str, linkIds, selectName, nameMap, fieldChoices } from '@/lib/silk/cells';
 import { buildFlagMap, type FlagInfo } from '@/lib/silk/history';
+import { flagKey, loadDismissed, saveDismissed } from '@/lib/silk/flagDismiss';
 
 // Shared grid template for the desktop list — used by both the column header and each InvRow.
 const INV_GRID = 'minmax(120px, 1.4fr) 1.1fr 1fr 0.9fr 0.8fr 120px';
@@ -65,8 +66,25 @@ function Inventory() {
     // Full choice lists for the inline row editors.
     const deptChoices = useMemo(() => fieldChoices(invTable, INV.department), [invTable]);
     const typeChoices = useMemo(() => fieldChoices(invTable, INV.type), [invTable]);
-    // invId → { flagged, latestDelta }: latest purchase's unit price vs the item's listed price.
+    // invId → FlagInfo: latest purchase's price vs the item's listed Unit Price.
     const flagByItem = useMemo(() => buildFlagMap(expenses, inv), [expenses, inv]);
+
+    // User-dismissed flags (localStorage). A flag is "active" only if it's flagged AND not dismissed
+    // for its current triggering purchase — a newer purchase re-raises it (different flagKey).
+    const [dismissed, setDismissed] = useState<Set<string>>(loadDismissed);
+    const refreshDismissed = () => setDismissed(loadDismissed());
+    const isFlagActive = (id: string) => {
+        const f = flagByItem.get(id);
+        return !!f?.flagged && !dismissed.has(flagKey(id, f.latestDate));
+    };
+    const dismissFlag = (id: string) => {
+        const f = flagByItem.get(id);
+        if (!f) return;
+        const s = loadDismissed();
+        s.add(flagKey(id, f.latestDate));
+        saveDismissed(s);
+        setDismissed(new Set(s));
+    };
 
     const [q, setQ] = useState('');
     const [loc, setLoc] = useState<string[]>([]);
@@ -92,7 +110,7 @@ function Inventory() {
             .filter(r => matchMulti(dept, [selectName(r, INV.department)].filter(Boolean)))
             .filter(r => matchMulti(type, [selectName(r, INV.type)].filter(Boolean)))
             .filter(r => matchMulti(vendor, linkIds(r, INV.vendor)))
-            .filter(r => flag === 'all' || (flag === 'flagged' ? !!flagByItem.get(r.id)?.flagged : !flagByItem.get(r.id)?.flagged))
+            .filter(r => flag === 'all' || (flag === 'flagged' ? isFlagActive(r.id) : !isFlagActive(r.id)))
             .filter(r => {
                 if (!needle) return true;
                 const hay = [str(r, INV.name), str(r, INV.orderName), linkIds(r, INV.vendor).map(id => vendorNames.get(id) ?? '').join(' '), selectName(r, INV.type)].join(' ').toLowerCase();
@@ -106,7 +124,7 @@ function Inventory() {
             return an.localeCompare(bn);
         });
         return sorted.slice(0, 400);
-    }, [inv, q, loc, dept, type, vendor, flag, sort, vendorNames, flagByItem]);
+    }, [inv, q, loc, dept, type, vendor, flag, sort, vendorNames, flagByItem, dismissed]);
 
     return (
         <div style={{ width: '100%', maxWidth: '1140px', margin: '0 auto', padding: `${isNarrow ? '18px' : '28px'} ${isNarrow ? '16px' : '26px'} 70px` }}>
@@ -118,8 +136,9 @@ function Inventory() {
                 <Button onClick={() => setForm({})} title="New item"><PlusIcon size={18} weight="bold" /></Button>
             </div>
 
-            {/* filters */}
-            <div style={{ ...glass(), padding: '10px', marginBottom: '14px',
+            {/* filters — raised above the list below so the dropdowns overlay it (both use
+                backdrop-filter, which creates stacking contexts painted in DOM order) */}
+            <div style={{ ...glass(), padding: '10px', marginBottom: '14px', position: 'relative', zIndex: 30,
                 ...(isNarrow
                     ? { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }
                     : { display: 'flex', gap: '10px', flexWrap: 'wrap', alignItems: 'center' }) }}>
@@ -148,21 +167,22 @@ function Inventory() {
                 </div>
             ) : flag === 'flagged' ? (
                 <PriceComparison rows={rows} flagByItem={flagByItem} vendorNames={vendorNames} isNarrow={isNarrow}
-                    onOpen={id => setForm({ recordId: id })} />
+                    onOpen={id => setForm({ recordId: id })} onDismiss={dismissFlag} />
             ) : (
                 <div style={{ ...glass(), padding: '4px', display: 'flex', flexDirection: 'column' }}>
                     {!isNarrow && <ColumnHeader gridCols={INV_GRID} cols={[{ label: 'Item' }, { label: 'Tracking Locations' }, { label: 'Vendor' }, { label: 'Department' }, { label: 'Type' }, { label: 'Unit Price', right: true }]} />}
                     {rows.map((r, i) => (
                         <InvRow key={r.id} rec={r} last={i === rows.length - 1} table={invTable} isNarrow={isNarrow}
                             vendors={vendors} locations={locations} vendorNames={vendorNames} locationNames={locationNames}
-                            deptChoices={deptChoices} typeChoices={typeChoices} flag={flagByItem.get(r.id)}
+                            deptChoices={deptChoices} typeChoices={typeChoices}
+                            flag={isFlagActive(r.id) ? flagByItem.get(r.id) : undefined} onDismissFlag={() => dismissFlag(r.id)}
                             onOpen={() => setForm({ recordId: r.id })} />
                     ))}
                 </div>
             )}
 
             {form && (
-                <InventoryForm recordId={form.recordId} onClose={() => setForm(null)} />
+                <InventoryForm recordId={form.recordId} onClose={() => setForm(null)} onFlagChange={refreshDismissed} />
             )}
         </div>
     );
@@ -187,10 +207,10 @@ const CMP_GRID = 'minmax(130px, 1.5fr) 1.1fr 0.85fr 0.8fr 84px 96px 82px';
  * sorted biggest jump first, so it can be dropped into an email to a vendor.
  */
 function PriceComparison({
-    rows, flagByItem, vendorNames, isNarrow, onOpen,
+    rows, flagByItem, vendorNames, isNarrow, onOpen, onDismiss,
 }: {
     rows: RecordModel[]; flagByItem: Map<string, FlagInfo>; vendorNames: Map<string, string>;
-    isNarrow: boolean; onOpen: (id: string) => void;
+    isNarrow: boolean; onOpen: (id: string) => void; onDismiss: (id: string) => void;
 }) {
     // Report leads with the biggest increases regardless of the page's own sort control.
     const ranked = useMemo(
@@ -221,7 +241,7 @@ function PriceComparison({
                 )}
                 {ranked.map((r, i) => (
                     <ComparisonRow key={r.id} rec={r} flag={flagByItem.get(r.id)} vendorNames={vendorNames}
-                        last={i === ranked.length - 1} isNarrow={isNarrow} onOpen={() => onOpen(r.id)} />
+                        last={i === ranked.length - 1} isNarrow={isNarrow} onOpen={() => onOpen(r.id)} onDismiss={() => onDismiss(r.id)} />
                 ))}
             </div>
         </div>
@@ -229,10 +249,10 @@ function PriceComparison({
 }
 
 function ComparisonRow({
-    rec, flag, vendorNames, last, isNarrow, onOpen,
+    rec, flag, vendorNames, last, isNarrow, onOpen, onDismiss,
 }: {
     rec: RecordModel; flag?: FlagInfo; vendorNames: Map<string, string>;
-    last: boolean; isNarrow: boolean; onOpen: () => void;
+    last: boolean; isNarrow: boolean; onOpen: () => void; onDismiss: () => void;
 }) {
     const name = str(rec, INV.name) || rec.name || '(unnamed)';
     const vendor = linkIds(rec, INV.vendor).map(id => vendorNames.get(id) ?? '').filter(Boolean).join(', ') || '—';
@@ -242,6 +262,13 @@ function ComparisonRow({
     const paid = flag?.latestUnit ?? 0;
     const pct = flag ? Math.round(flag.latestDelta * 100) : 0;
 
+    const dismissBtn = (
+        <button type="button" title="Dismiss this flag" aria-label="Dismiss flag"
+            onClick={e => { e.stopPropagation(); onDismiss(); }}
+            style={{ flexShrink: 0, width: '20px', height: '20px', borderRadius: '6px', border: '1px solid var(--glass-border)', background: 'var(--glass-bg)', color: 'var(--text-muted)', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', padding: 0 }}>
+            <XIcon size={11} weight="bold" />
+        </button>
+    );
     const pctPill = (
         <span style={{ display: 'inline-flex', alignItems: 'center', gap: '3px', fontSize: '11px', fontWeight: 700, color: PALETTE.rust, background: 'rgba(181,138,58,0.16)', padding: '2px 8px', borderRadius: '999px' }}>
             <TrendUpIcon size={11} weight="bold" /> +{pct}%
@@ -262,7 +289,7 @@ function ComparisonRow({
                 <span style={{ fontSize: '12.5px', color: 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{type}</span>
                 <span style={{ textAlign: 'right', fontSize: '13px', color: 'var(--text-muted)', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>{listed ? usd(listed) : '—'}</span>
                 <span style={{ textAlign: 'right', fontFamily: DISPLAY, fontSize: '16px', color: PALETTE.rust, fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>{paid ? usd(paid) : '—'}</span>
-                <span style={{ textAlign: 'right' }}>{pctPill}</span>
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', justifyContent: 'flex-end' }}>{pctPill}{dismissBtn}</span>
             </div>
         );
     }
@@ -271,7 +298,7 @@ function ComparisonRow({
         <div {...shared} style={{ display: 'flex', flexDirection: 'column', gap: '8px', padding: '12px 14px', borderRadius: 'var(--radius-sm)', cursor: 'pointer', borderBottom: last ? 'none' : '1px solid var(--hairline)' }}>
             <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '10px' }}>
                 <span style={{ fontWeight: 700, fontSize: '14.5px', color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis' }}>{name}</span>
-                {pctPill}
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', flexShrink: 0 }}>{pctPill}{dismissBtn}</span>
             </div>
             <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>{[vendor, dept, type].filter(v => v && v !== '—').join(' · ') || '—'}</div>
             <div style={{ display: 'flex', alignItems: 'baseline', gap: '8px', fontVariantNumeric: 'tabular-nums' }}>
@@ -291,13 +318,14 @@ function CaretRightMini() {
 // One inventory row — aligned columns like Expenses/Sales with inline-editable Tracking
 // Locations, Vendor, Department and Type (write straight to Airtable, dd-savebar while saving).
 function InvRow({
-    rec, last, table, isNarrow, vendors, locations, vendorNames, locationNames, deptChoices, typeChoices, flag, onOpen,
+    rec, last, table, isNarrow, vendors, locations, vendorNames, locationNames, deptChoices, typeChoices, flag, onDismissFlag, onOpen,
 }: {
     rec: RecordModel; last: boolean; table: TableModel; isNarrow: boolean;
     vendors: RecordModel[]; locations: RecordModel[];
     vendorNames: Map<string, string>; locationNames: Map<string, string>;
     deptChoices: string[]; typeChoices: string[];
     flag?: { flagged: boolean; latestDelta: number };
+    onDismissFlag?: () => void;
     onOpen: () => void;
 }) {
     const name = str(rec, INV.name) || rec.name || '(unnamed)';
@@ -327,9 +355,11 @@ function InvRow({
     const amountCell = (
         <div style={{ textAlign: 'right', display: 'flex', flexDirection: 'column', gap: '2px', alignItems: 'flex-end' }}>
             {flag?.flagged && (
-                <span title={`Latest purchase is ${Math.round(flag.latestDelta * 100)}% above the listed unit price`}
-                    style={{ display: 'inline-flex', alignItems: 'center', gap: '3px', fontSize: '10.5px', fontWeight: 700, color: PALETTE.rust, background: 'rgba(181,138,58,0.16)', padding: '1px 7px', borderRadius: '999px' }}>
+                <span onClick={e => { e.stopPropagation(); onDismissFlag?.(); }}
+                    title={`Latest purchase is ${Math.round(flag.latestDelta * 100)}% above the listed unit price — click to dismiss`}
+                    style={{ display: 'inline-flex', alignItems: 'center', gap: '3px', fontSize: '10.5px', fontWeight: 700, color: PALETTE.rust, background: 'rgba(181,138,58,0.16)', padding: '1px 5px 1px 7px', borderRadius: '999px', cursor: 'pointer' }}>
                     <TrendUpIcon size={11} weight="bold" /> {Math.round(flag.latestDelta * 100)}%
+                    <XIcon size={9} weight="bold" style={{ opacity: 0.7 }} />
                 </span>
             )}
             <span style={{ fontFamily: DISPLAY, fontSize: '16px', color: 'var(--text-primary)' }}>{price ? usd(price) : '—'}</span>

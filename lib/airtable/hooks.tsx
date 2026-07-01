@@ -19,8 +19,14 @@ const jsonFetcher = async (url: string) => {
     return res.json();
 };
 
-// Live-poll interval so AI / formula fields fill in without a manual refresh.
-const RECORDS_REFRESH_MS = 6000;
+// Background poll to catch externally-changed rows and server-computed (formula / AI) fields.
+// The user's OWN edits don't rely on this — every create/update/delete calls revalidate() and
+// refetches its table immediately. So this only needs to be slow: the tables are large (Expenses
+// ~2.5k rows = 25 paginated Airtable calls, Sales ~3.9k = 39) and a page loads several at once, so
+// a tight interval blows past Airtable's 5 req/s/base limit (429s + overlapping fetches). 60s keeps
+// data fresh enough while cutting that background load ~10×. revalidateOnFocus (SWR default) still
+// gives an instant refresh whenever the user returns to the tab.
+const RECORDS_REFRESH_MS = 60000;
 
 /** Drop-in for the Blocks SDK `useBase()`. Suspends until the schema loads. */
 export function useBase(): BaseModel {
@@ -34,7 +40,10 @@ export function useRecords(table: TableModel | null | undefined): RecordModel[] 
     const { data } = useSWR(
         tableId ? recordsKey(tableId) : null,
         () => jsonFetcher(`/api/airtable/records/${tableId}`),
-        { suspense: true, refreshInterval: RECORDS_REFRESH_MS },
+        // dedupingInterval coalesces the on-mount refetch when navigating between pages that share a
+        // table (e.g. Expenses ↔ Inventory both load Expenses) so it isn't re-pulled on every nav;
+        // writes still bypass this via the explicit mutate() in RecordModel.revalidate().
+        { suspense: true, refreshInterval: RECORDS_REFRESH_MS, dedupingInterval: RECORDS_REFRESH_MS },
     );
     return useMemo(
         () => (table ? ((data?.records as RawRecord[]) ?? []).map(r => new RecordModel(r, table)) : []),

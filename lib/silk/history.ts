@@ -8,29 +8,23 @@ import type { RecordModel } from '@/lib/airtable/models';
 import { EX, INV } from '@/lib/silk/schema';
 import { num, str, linkIds } from '@/lib/silk/cells';
 
-// A purchase is flagged when its unit price is at least this far above the listed price.
+// A purchase is flagged when its price is at least this far ABOVE the listed price.
 export const PRICE_FLAG_PCT = 0.10;
 
 /**
- * % difference of one purchase's unit price vs an inventory item's listed price, normalized
- * so pack-size / unit-of-measure mismatches don't produce bogus deltas.
+ * Straight % difference of one purchase's price vs the item's listed Unit Price.
+ * Positive = the purchase cost MORE than the listed price (a price increase → flagged when it
+ * clears PRICE_FLAG_PCT); negative = it cost LESS (a decrease, never flagged).
  *
- * An item gives us two reliable reference prices: its listed Unit Price (per pack/case/lb) and
- * that ÷ #/Unit (per individual item — the "$ #/unit" formula). An invoice line's unit price may
- * be written on EITHER basis (a case price vs an each price), and the expense's own pack-size
- * field is frequently missing or wrong — so rather than trust it, we snap the purchase price to
- * whichever of the item's two reference prices it sits closest to (on a ratio/log scale) and take
- * the % difference from that. This keeps like-for-like comparisons (e.g. $14.50/lb vs $10/lb =
- * +45%) while preventing a per-case price from being compared against a per-each listing.
+ * Deliberately simple: the value passed in is the purchase's own unit price (or its line total
+ * when no unit price was recorded — see resolvePurchaseValue) and we compare it directly to the
+ * item's listed Unit Price. No pack-size normalization — that guesswork was turning genuine
+ * decreases into bogus increases (e.g. $48.49 paid vs a $95.75 listing must read −49%, not +52%).
  * Returns null when either side is missing or non-positive.
  */
-export function listedPriceDelta(purchaseUnit: number, listed: number, perUnit: number): number | null {
-    if (purchaseUnit <= 0 || listed <= 0) return null;
-    const perItem = perUnit > 1 ? listed / perUnit : listed;
-    // Unpacked item (or no #/Unit): the two references coincide — straight comparison.
-    if (perItem >= listed) return (purchaseUnit - listed) / listed;
-    const ref = Math.abs(Math.log(purchaseUnit / perItem)) < Math.abs(Math.log(purchaseUnit / listed)) ? perItem : listed;
-    return (purchaseUnit - ref) / ref;
+export function listedPriceDelta(purchaseValue: number, listed: number): number | null {
+    if (purchaseValue <= 0 || listed <= 0) return null;
+    return (purchaseValue - listed) / listed;
 }
 
 export type Purchase = {
@@ -56,25 +50,25 @@ export type PriceHistory = {
     avg: number | null;
 };
 
-function resolveUnitPrice(e: RecordModel): number {
+// The comparable price for a purchase: its recorded unit price, or the line total when no unit
+// price was entered ("…or total price if there is none"). Compared as-is to the listed Unit Price.
+function resolvePurchaseValue(e: RecordModel): number {
     const up = num(e, EX.unitPrice);
     if (up > 0) return up;
-    const qty = num(e, EX.unitQty);
-    const total = num(e, EX.total);
-    return qty > 0 ? total / qty : 0;
+    return num(e, EX.total);
 }
 
 /** Full price history for one inventory item, built from its linked Expenses. */
 export function buildPriceHistory(
-    expenses: RecordModel[], invId: string, baseline: number, basePerUnit: number, vendorNames: Map<string, string>,
+    expenses: RecordModel[], invId: string, baseline: number, vendorNames: Map<string, string>,
 ): PriceHistory {
     const linked = expenses
         .filter(e => linkIds(e, EX.inventory).includes(invId))
         .sort((a, b) => str(a, EX.date).localeCompare(str(b, EX.date)) || a.createdTime.localeCompare(b.createdTime));
     const purchases: Purchase[] = linked.map(e => {
-        const unitPrice = resolveUnitPrice(e);
+        const unitPrice = resolvePurchaseValue(e);
         const vId = linkIds(e, EX.vendors)[0];
-        const deltaVsBase = listedPriceDelta(unitPrice, baseline, basePerUnit);
+        const deltaVsBase = listedPriceDelta(unitPrice, baseline);
         return {
             id: e.id,
             date: str(e, EX.date),
@@ -123,7 +117,7 @@ export function buildFlagMap(
     for (const e of expenses) {
         const ids = linkIds(e, EX.inventory);
         if (!ids.length) continue;
-        const unitPrice = resolveUnitPrice(e);
+        const unitPrice = resolvePurchaseValue(e);
         if (unitPrice <= 0) continue;
         const date = str(e, EX.date);
         const created = e.createdTime;
@@ -139,7 +133,7 @@ export function buildFlagMap(
         const l = latest.get(inv.id);
         const baseline = num(inv, INV.unitPrice);
         if (!l || baseline <= 0) continue;
-        const delta = listedPriceDelta(l.unitPrice, baseline, num(inv, INV.perUnit));
+        const delta = listedPriceDelta(l.unitPrice, baseline);
         if (delta == null) continue;
         out.set(inv.id, { flagged: delta >= PRICE_FLAG_PCT, latestDelta: delta, latestUnit: l.unitPrice, latestDate: l.date });
     }

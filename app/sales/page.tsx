@@ -122,7 +122,6 @@ function Sales() {
         return filtered.slice(0, 600);
     }, [sales, week, loc, dept, product, sort, q]);
 
-    const total = useMemo(() => rows.reduce((s, r) => s + num(r, SALE.netSales), 0), [rows]);
     const openRec = openId ? sales.find(r => r.id === openId) ?? null : null;
     const pad = isNarrow ? '16px' : '26px';
 
@@ -169,13 +168,7 @@ function Sales() {
                     <div style={{ fontFamily: MONO, fontSize: '11px', fontWeight: 700, letterSpacing: '0.14em', textTransform: 'uppercase', color: 'var(--text-muted)' }}>// Sales</div>
                     <h1 style={{ fontFamily: DISPLAY, fontSize: isNarrow ? '34px' : '44px', textTransform: 'uppercase', letterSpacing: '0.02em', margin: '6px 0 0', color: 'var(--text-primary)' }}>The Register</h1>
                 </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                    <div style={{ ...glass({ soft: true }), padding: '10px 16px', textAlign: 'right' }}>
-                        <div style={{ fontFamily: MONO, fontSize: '10px', letterSpacing: '0.12em', textTransform: 'uppercase', color: 'var(--text-muted)' }}>{rows.length} shown</div>
-                        <div style={{ fontFamily: DISPLAY, fontSize: '24px', color: 'var(--text-primary)' }}>{usd(total)}</div>
-                    </div>
-                    <Button onClick={() => setCreating(true)} title="New sale"><PlusIcon size={18} weight="bold" /></Button>
-                </div>
+                <Button onClick={() => setCreating(true)} title="New sale"><PlusIcon size={18} weight="bold" /></Button>
             </div>
 
             {/* Filters (multi-select except Sort). position+zIndex lift the bar so open

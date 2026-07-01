@@ -277,25 +277,38 @@ export function InlineLink({ value, names, options, placeholder, onChange, onTog
     );
 }
 
-// multi-select choices (Category): checkbox popover, stays open while toggling.
+// multi-select choices (Category): checkbox popover. Toggles are buffered locally and
+// committed to the parent in ONE write when the popover closes (outside click / re-tap the
+// chip) — so ticking several categories is a single sync, not one per click.
 export function InlineMulti({ value, options, onChange, placeholder, onToggle, saving, fill }: {
     value: string[]; options: string[]; onChange: (v: string[]) => void; placeholder: string;
     onToggle?: (open: boolean) => void; saving?: boolean; fill?: boolean;
 }) {
     const [open, setOpen] = useState(false);
+    const [draft, setDraft] = useState<string[]>(value);
     const ref = useRef<HTMLDivElement>(null);
     useEffect(() => { onToggle?.(open); }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
+    // Mirror the saved value into the draft while closed (picks up external/SWR updates);
+    // never clobber an in-progress selection while the popover is open.
+    useEffect(() => { if (!open) setDraft(value); }, [open, value]);
+    // Close the popover and push the buffered selection — only if it actually changed.
+    const close = () => {
+        setOpen(false);
+        const changed = draft.length !== value.length || draft.some(x => !value.includes(x));
+        if (changed) onChange(draft);
+    };
     useEffect(() => {
         if (!open) return;
-        const onDoc = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false); };
+        const onDoc = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) close(); };
         document.addEventListener('mousedown', onDoc);
         return () => document.removeEventListener('mousedown', onDoc);
-    }, [open]);
-    const toggle = (o: string) => onChange(value.includes(o) ? value.filter(x => x !== o) : [...value, o]);
+    }, [open, draft, value]); // re-bind so the handler commits the latest draft
+    const toggle = (o: string) => setDraft(d => d.includes(o) ? d.filter(x => x !== o) : [...d, o]);
+    const shown = open ? draft : value; // chip reflects the live draft while editing
     return (
         <div ref={ref} style={{ position: 'relative', width: fill ? '100%' : undefined, minWidth: 0 }} onClick={e => e.stopPropagation()}>
-            <button type="button" onClick={() => setOpen(o => !o)} style={{ ...inlineChip, maxWidth: fill ? undefined : '200px', width: fill ? '100%' : undefined, opacity: saving ? 0.7 : 1, color: value.length ? 'var(--text-primary)' : 'var(--text-muted)' }}>
-                <span style={{ ...ellip, ...(fill ? { flex: 1, minWidth: 0 } : {}) }}>{value.length ? value.join(', ') : `+ ${placeholder}`}</span>
+            <button type="button" onClick={() => (open ? close() : setOpen(true))} style={{ ...inlineChip, maxWidth: fill ? undefined : '200px', width: fill ? '100%' : undefined, opacity: saving ? 0.7 : 1, color: shown.length ? 'var(--text-primary)' : 'var(--text-muted)' }}>
+                <span style={{ ...ellip, ...(fill ? { flex: 1, minWidth: 0 } : {}) }}>{shown.length ? shown.join(', ') : `+ ${placeholder}`}</span>
                 <CaretDownIcon size={11} weight="bold" style={{ opacity: 0.55, flexShrink: 0 }} />
                 {saving && <span className="dd-savebar" aria-hidden />}
             </button>
@@ -303,7 +316,7 @@ export function InlineMulti({ value, options, onChange, placeholder, onToggle, s
                 <div style={{ ...dropdown, right: 'auto', minWidth: '200px' }}>
                     <div style={dropHeader}>{placeholder}</div>
                     {options.map(o => {
-                        const on = value.includes(o);
+                        const on = draft.includes(o);
                         return (
                             <div key={o} onClick={() => toggle(o)} style={{ ...dropItem, display: 'flex', alignItems: 'center', gap: '9px', color: on ? 'var(--text-primary)' : 'var(--text-muted)', fontWeight: on ? 700 : 500 }}>
                                 <span style={{ width: '17px', height: '17px', borderRadius: '5px', border: '1px solid var(--hairline)', background: on ? 'var(--accent)' : 'transparent', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>

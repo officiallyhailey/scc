@@ -1,26 +1,29 @@
 'use client';
 
 import React, { useMemo, useState } from 'react';
-import { XIcon, FloppyDiskIcon, TrendUpIcon, CaretRightIcon } from '@phosphor-icons/react';
+import { XIcon, FloppyDiskIcon, TrendUpIcon, CaretRightIcon, PackageIcon } from '@phosphor-icons/react';
 import { useBase, useRecords } from '@/lib/airtable/hooks';
 import { useIsNarrow } from '@/lib/useIsNarrow';
 import { glass, Button, DISPLAY, MONO, inputStyle, MoneyInput, PALETTE } from '@/lib/components/ui';
 import { Field, PlainSelect, LinkPicker, MultiLinkPicker, iconBtn } from '@/lib/components/fields';
-import { PurchaseHistory } from '@/lib/components/PurchaseHistory';
+import { PurchaseHistoryBody } from '@/lib/components/PurchaseHistory';
 import { TABLES, INV } from '@/lib/silk/schema';
 import { str, numStr, linkIds, selectName, fieldChoices, nameMap, parseNum } from '@/lib/silk/cells';
 
 /**
  * Create or edit an Inventory item. Self-contained: pulls its own tables/records.
  * Render inside an <AirtableBoundary>. Slides in from the right above other panels.
+ * For existing items the detail is organized into two collapsible sections — Purchase history
+ * (on top) and Inventory details (below). `onFlagChange` lets the list re-sync dismissed flags.
  */
 export function InventoryForm({
-    recordId, initialName, onClose, onSaved,
+    recordId, initialName, onClose, onSaved, onFlagChange,
 }: {
     recordId?: string;          // edit an existing item; omit to create
     initialName?: string;       // prefill name (e.g. from an expense's item)
     onClose: () => void;
     onSaved?: (id: string) => void;
+    onFlagChange?: () => void;  // called when a price flag is dismissed/restored in the history section
 }) {
     const isNarrow = useIsNarrow();
     const base = useBase();
@@ -54,7 +57,6 @@ export function InventoryForm({
     }));
     const [busy, setBusy] = useState(false);
     const [err, setErr] = useState('');
-    const [showHistory, setShowHistory] = useState(false);
     type D = typeof d;
     const set = <K extends keyof D>(k: K, v: D[K]) => { setD(p => ({ ...p, [k]: v })); };
 
@@ -108,55 +110,56 @@ export function InventoryForm({
                     <button onClick={onClose} aria-label="Close" style={iconBtn}><XIcon size={18} weight="bold" /></button>
                 </div>
 
-                {/* Purchase-history report (existing items only) */}
+                <Field label="Item name *"><input value={d.name} onChange={e => set('name', e.target.value)} autoFocus={!existing} style={inputStyle} placeholder="e.g. Oat Milk — Half Gallon" /></Field>
+
+                {/* Purchase history — collapsible section (existing items only), on top */}
                 {existing && recordId && (
-                    <button type="button" onClick={() => setShowHistory(true)}
-                        style={{ ...glass({ soft: true }), padding: '11px 13px', display: 'flex', alignItems: 'center', gap: '10px', cursor: 'pointer', textAlign: 'left', border: '1px solid var(--glass-border)' }}>
-                        <span style={{ width: '32px', height: '32px', borderRadius: '9px', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--accent-soft)', color: 'var(--accent-deep)' }}><TrendUpIcon size={18} weight="bold" /></span>
-                        <span style={{ flex: 1, minWidth: 0 }}>
-                            <span style={{ display: 'block', fontSize: '13.5px', fontWeight: 700, color: 'var(--text-primary)' }}>Purchase history</span>
-                            <span style={{ display: 'block', fontSize: '12px', color: 'var(--text-muted)' }}>Unit price, qty & total over time — with price-jump flags</span>
-                        </span>
-                        <CaretRightIcon size={16} weight="bold" color="var(--text-muted)" />
-                    </button>
+                    <Collapsible title="Purchase history" subtitle="Price trend, jump flags & editable purchases"
+                        icon={<TrendUpIcon size={17} weight="bold" />} defaultOpen>
+                        <PurchaseHistoryBody recordId={recordId} onFlagChange={onFlagChange} />
+                    </Collapsible>
                 )}
 
-                <Field label="Item name *"><input value={d.name} onChange={e => set('name', e.target.value)} autoFocus style={inputStyle} placeholder="e.g. Oat Milk — Half Gallon" /></Field>
+                {/* Inventory details — collapsible section, below (open by default for new items) */}
+                <Collapsible title="Inventory details" subtitle="Vendor, pricing, units & stock levels"
+                    icon={<PackageIcon size={17} weight="bold" />} defaultOpen={!existing}>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+                        <Field label="Vendor"><LinkPicker options={vendors} names={vendorNames} value={d.vendor} onChange={v => set('vendor', v)} placeholder="Search vendors…" /></Field>
 
-                <Field label="Vendor"><LinkPicker options={vendors} names={vendorNames} value={d.vendor} onChange={v => set('vendor', v)} placeholder="Search vendors…" /></Field>
+                        <div style={row2}>
+                            <Field label="Department"><PlainSelect options={fieldChoices(invTable, INV.department)} value={d.department} onChange={v => set('department', v)} /></Field>
+                            <Field label="Type"><PlainSelect options={fieldChoices(invTable, INV.type)} value={d.type} onChange={v => set('type', v)} /></Field>
+                        </div>
 
-                <div style={row2}>
-                    <Field label="Department"><PlainSelect options={fieldChoices(invTable, INV.department)} value={d.department} onChange={v => set('department', v)} /></Field>
-                    <Field label="Type"><PlainSelect options={fieldChoices(invTable, INV.type)} value={d.type} onChange={v => set('type', v)} /></Field>
-                </div>
+                        <Field label="Link (URL)"><input value={d.url} onChange={e => set('url', e.target.value)} style={inputStyle} placeholder="https://…" /></Field>
 
-                <Field label="Link (URL)"><input value={d.url} onChange={e => set('url', e.target.value)} style={inputStyle} placeholder="https://…" /></Field>
+                        <div style={row2}>
+                            <Field label="#/Unit"><input inputMode="decimal" value={d.perUnit} onChange={e => set('perUnit', e.target.value)} style={inputStyle} /></Field>
+                            <Field label="Unit"><PlainSelect options={fieldChoices(invTable, INV.unit)} value={d.unit} onChange={v => set('unit', v)} /></Field>
+                        </div>
+                        <div style={row3}>
+                            <Field label="Unit price"><MoneyInput value={d.unitPrice} onChange={v => set('unitPrice', v)} /></Field>
+                            <Field label="Unit weight"><input inputMode="decimal" value={d.unitWeight} onChange={e => set('unitWeight', e.target.value)} style={inputStyle} /></Field>
+                            <Field label="Unit measure"><PlainSelect options={fieldChoices(invTable, INV.unitMeasure)} value={d.unitMeasure} onChange={v => set('unitMeasure', v)} /></Field>
+                        </div>
 
-                <div style={row2}>
-                    <Field label="#/Unit"><input inputMode="decimal" value={d.perUnit} onChange={e => set('perUnit', e.target.value)} style={inputStyle} /></Field>
-                    <Field label="Unit"><PlainSelect options={fieldChoices(invTable, INV.unit)} value={d.unit} onChange={v => set('unit', v)} /></Field>
-                </div>
-                <div style={row3}>
-                    <Field label="Unit price"><MoneyInput value={d.unitPrice} onChange={v => set('unitPrice', v)} /></Field>
-                    <Field label="Unit weight"><input inputMode="decimal" value={d.unitWeight} onChange={e => set('unitWeight', e.target.value)} style={inputStyle} /></Field>
-                    <Field label="Unit measure"><PlainSelect options={fieldChoices(invTable, INV.unitMeasure)} value={d.unitMeasure} onChange={v => set('unitMeasure', v)} /></Field>
-                </div>
+                        {existing && dollarPerUnit && (
+                            <div style={{ ...glass({ soft: true }), padding: '8px 12px', fontSize: '13px', color: 'var(--text-muted)' }}>
+                                <span style={{ fontFamily: MONO, fontSize: '10px', letterSpacing: '0.1em', textTransform: 'uppercase' }}>$ #/unit </span>
+                                <strong style={{ color: 'var(--text-primary)' }}>{dollarPerUnit}</strong> <span style={{ fontSize: '11px' }}>(calculated)</span>
+                            </div>
+                        )}
 
-                {existing && dollarPerUnit && (
-                    <div style={{ ...glass({ soft: true }), padding: '8px 12px', fontSize: '13px', color: 'var(--text-muted)' }}>
-                        <span style={{ fontFamily: MONO, fontSize: '10px', letterSpacing: '0.1em', textTransform: 'uppercase' }}>$ #/unit </span>
-                        <strong style={{ color: 'var(--text-primary)' }}>{dollarPerUnit}</strong> <span style={{ fontSize: '11px' }}>(calculated)</span>
+                        <Field label="Tracking locations"><MultiLinkPicker options={locations} names={locationNames} value={d.trackingLocations} onChange={v => set('trackingLocations', v)} placeholder="Add locations…" /></Field>
+
+                        <div style={row2}>
+                            <Field label="763 Stock"><input inputMode="decimal" value={d.stock763} onChange={e => set('stock763', e.target.value)} style={inputStyle} /></Field>
+                            <Field label="763 Base"><input inputMode="decimal" value={d.base763} onChange={e => set('base763', e.target.value)} style={inputStyle} /></Field>
+                            <Field label="869 Stock"><input inputMode="decimal" value={d.stock869} onChange={e => set('stock869', e.target.value)} style={inputStyle} /></Field>
+                            <Field label="869 Base"><input inputMode="decimal" value={d.base869} onChange={e => set('base869', e.target.value)} style={inputStyle} /></Field>
+                        </div>
                     </div>
-                )}
-
-                <Field label="Tracking locations"><MultiLinkPicker options={locations} names={locationNames} value={d.trackingLocations} onChange={v => set('trackingLocations', v)} placeholder="Add locations…" /></Field>
-
-                <div style={row2}>
-                    <Field label="763 Stock"><input inputMode="decimal" value={d.stock763} onChange={e => set('stock763', e.target.value)} style={inputStyle} /></Field>
-                    <Field label="763 Base"><input inputMode="decimal" value={d.base763} onChange={e => set('base763', e.target.value)} style={inputStyle} /></Field>
-                    <Field label="869 Stock"><input inputMode="decimal" value={d.stock869} onChange={e => set('stock869', e.target.value)} style={inputStyle} /></Field>
-                    <Field label="869 Base"><input inputMode="decimal" value={d.base869} onChange={e => set('base869', e.target.value)} style={inputStyle} /></Field>
-                </div>
+                </Collapsible>
 
                 {err && <div style={{ color: PALETTE.rust, fontSize: '13px', fontWeight: 600 }}>{err}</div>}
 
@@ -168,8 +171,28 @@ export function InventoryForm({
                 </div>
             </div>
         </div>
-        {showHistory && recordId && <PurchaseHistory recordId={recordId} onClose={() => setShowHistory(false)} />}
       </>
+    );
+}
+
+// Collapsible section wrapper used to organize the detail drawer (Purchase history / Inventory details).
+function Collapsible({ title, subtitle, icon, defaultOpen, children }: {
+    title: string; subtitle?: string; icon?: React.ReactNode; defaultOpen?: boolean; children: React.ReactNode;
+}) {
+    const [open, setOpen] = useState(!!defaultOpen);
+    return (
+        <div style={{ ...glass({ soft: true }), border: '1px solid var(--glass-border)', borderRadius: 'var(--radius-sm)' }}>
+            <button type="button" onClick={() => setOpen(o => !o)}
+                style={{ width: '100%', display: 'flex', alignItems: 'center', gap: '10px', padding: '12px 14px', background: 'transparent', border: 'none', cursor: 'pointer', textAlign: 'left' }}>
+                <span style={{ width: '30px', height: '30px', borderRadius: '9px', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--accent-soft)', color: 'var(--accent-deep)' }}>{icon}</span>
+                <span style={{ flex: 1, minWidth: 0 }}>
+                    <span style={{ display: 'block', fontSize: '13.5px', fontWeight: 700, color: 'var(--text-primary)' }}>{title}</span>
+                    {subtitle && <span style={{ display: 'block', fontSize: '12px', color: 'var(--text-muted)' }}>{subtitle}</span>}
+                </span>
+                <CaretRightIcon size={16} weight="bold" color="var(--text-muted)" style={{ flexShrink: 0, transform: open ? 'rotate(90deg)' : 'none', transition: 'transform .15s' }} />
+            </button>
+            {open && <div style={{ padding: '2px 14px 14px' }}>{children}</div>}
+        </div>
     );
 }
 
